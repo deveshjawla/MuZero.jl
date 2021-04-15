@@ -1,6 +1,8 @@
 # 2020-04-14
 1. Added struct to MinMaxstats.jl module
 2. Brought examples into muzero.jl file
+3. MinMaxStats.jl and Node.jl modules written with #TODOs
+4. Working on GameHistory.jl
 
 # 2020-04-13
 1. Writing MinMaxstats.jl module
