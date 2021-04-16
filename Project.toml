@@ -1,0 +1,9 @@
+name = "MuZero"
+uuid = "ff17f8ee-11f1-4f6d-9271-9e9bef87862a"
+authors = ["deveshjawla <devesh.jawla@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
+Parameters = "d96e819e-fc66-5662-9728-84c9c7592b0a"
