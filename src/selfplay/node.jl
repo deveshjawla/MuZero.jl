@@ -1,8 +1,9 @@
-
+export Node, expanded, node_value, expand_node, add_exploration_noise
 using Distributions: Dirichlet
-export Node, expanded, value, expand_node, add_exploration_noise
+using Parameters
 
-struct Node
+
+@with_kw mutable struct Node
     visit_count::Int64
     to_play::Int64
     prior::Float64

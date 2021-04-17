@@ -3,7 +3,8 @@
 # GameHistory(ActionHistory)
 Keeps track of the action and other relevant GameHistory of a self-play game.
 """
-using Parameters
+export GameHistory, store_search_stats!, get_stacked_observations
+include("node.jl")
 
 @with_kw mutable struct GameHistory
     observation_history::Vector{Any} = [] #TODO sepcify types
@@ -21,7 +22,7 @@ end
 Turn visit_count from root into a policy
 """
 function store_search_stats!(history::GameHistory, root::Node, action_space)
-    if root ≠ nothing
+    if root.prior ≠ nothing #CHECK
         sum_visits = sum([child.visit_count for child in collect(values(root.children))])
         child_visits = [
             haskey(a, root.children) ? root.children[a].visit_count / sum_visits : 0 for
@@ -48,14 +49,14 @@ function get_stacked_observations(history::GameHistory, index, num_stacked_obser
             previous_observation = vcat(
                 history.observation_history[past_observation_index],
                 [
-                    ones(stacked_observations[0]) *
+                    ones(stacked_observations[1]) *
                     history.action_history[past_observation_index+1],
                 ],
             )
         else
             previous_observation = vcat(
                 zeros(history.observation_history[index]),
-                zeros(stacked_observations[0]),
+                zeros(stacked_observations[1]), #TOSEE
             )
         end
         stacked_observations = vcat(stacked_observations, previous_observation)

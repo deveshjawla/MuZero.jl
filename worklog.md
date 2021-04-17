@@ -1,3 +1,6 @@
+# 2020-04-17
+1. Working on the last parts of SelfPlay module Things to #TODO, #CHECK & #TOSEE remain. Also need to revisit all files in this module to optimize code for performance.
+
 # 2020-04-14
 1. Added struct to MinMaxstats.jl module
 2. Brought examples into muzero.jl file
