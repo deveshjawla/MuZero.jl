@@ -9,7 +9,6 @@ function __init__(initial_checkpoint, Game, config, seed)
     global config = config
     global game = Game(seed)
 
-    # Fix random generator seed
     torch.manual_seed(seed) #TODO
 
     # Initialize the network
