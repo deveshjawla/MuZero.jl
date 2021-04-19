@@ -4,26 +4,18 @@ Run in a dedicated thread to play games and save them to the replay-buffer.
 module SelfPlay
 
 include("mcts.jl")
+include("../networks/SharedStorage.jl")
 
-function __init__(initial_checkpoint, Game, config, seed)
-    global config = config
-    global game = Game(seed)
+include("../utilities/AbstractGame.jl") #COMMENT this line when running code
 
-    torch.manual_seed(seed) #TODO
-
-    # Initialize the network
-    global model = models.MuZeroNetwork(config)
-    model.set_weights(initial_checkpoint["weights"])
-    model.to(torch.device(torch.cuda.is_available() ? "cuda" : "cpu"))
-    model.eval()
-end
+using .SharedStorage
 
 """
 Select action according to the visit count distribution and the temperature.
 The temperature is changed dynamically with the visit_softmax_temperature function
 in the config.
 """
-function select_action(node, temperature)
+function select_action(node::Node, temperature::Float64)::Int64
     visit_counts = Int32[child.visit_count for child in values(node.children)]
     actions = [action for action in keys(node.children)]
     if temperature == 0
@@ -41,28 +33,29 @@ end
 """
 Select opponent action for evaluating MuZero level.
 """
-function select_opponent_action(model, game, opponent, stacked_observations)
+function select_opponent_action(network, game::Game, opponent, stacked_observations)
     if opponent == "human"
         root, mcts_info = run_mcts(
             config,
-            model,
+            network,
             stacked_observations,
-            game.legal_actions(),
-            game.to_play(),
+            legal_actions(),
+            to_play(),
             true,
+            false
         )
         print("Tree depth: $(mcts_info["max_tree_depth"])")
-        print("Root value for player $(game.to_play()): $(node_value(root))")
+        print("Root value for player $(to_play()): $(node_value(root))")
         print(
-            "Player $(game.to_play()) turn. MuZero suggests $(game.action_to_string(select_action(root, 0)))",
+            "Player $(to_play()) turn. MuZero suggests $(action_to_string(select_action(root, 0)))",
         )
-        return game.human_to_action(), root
+        return human_to_action(), root
     elseif opponent == "expert"
-        return game.expert_agent(), None
+        return expert_agent(), nothing
     elseif opponent == "random"
         @assert legal_actions "Legal actions should not be an empty array. Got $(legal_actions)"
         @assert set(legal_actions) ⊆ set(config.action_space) "Legal actions should be a subset of the action space."
-        return rand(rng, game.legal_actions()), None
+        return rand(rng, legal_actions()), nothing
     else
         error("Wrong argument: opponent argument should be self, human, expert or random")
     end
@@ -72,25 +65,25 @@ end
 Play one game with actions based on the Monte Carlo tree search at each moves.
 """
 function play_game(
-    config,
-    game,
+    config::Config,
+    game::Game,
     temperature,
     temperature_threshold,
-    render,
+    render::Bool,
     opponent,
     muzero_player,
 )
     history = GameHistory()
-    observation = self.game.reset()
+    observation = reset_game() #TODO
     append!(history.action_history, 0)
     append!(history.observation_history, observation)
     append!(history.reward_history, 0)
-    append!(history.to_play_history, self.game.to_play())
+    append!(history.to_play_history, to_play())
 
     done = false
 
     if render
-        game.render()
+        render_game()
     end
 
     while !done && history.action_history <= config.max_moves
@@ -100,14 +93,15 @@ function play_game(
             get_stacked_observations(history, -1, config.stacked_observations)
 
         # Choose the action
-        if opponent == "self" || muzero_player == self.game.to_play()
+        if opponent == "self" || muzero_player == to_play()
             root, mcts_info = run_mcts(
                 config,
-                model,
+                network,
                 stacked_observations,
-                game.legal_actions(),
-                game.to_play(),
+                legal_actions(),
+                to_play(),
                 true,
+                false
             )
             action = select_action(
                 root,
@@ -118,20 +112,20 @@ function play_game(
             if render
                 println("Tree depth: $(mcts_info["max_tree_depth"])")
                 println(
-                    "Root value for player $(self.game.to_play()): {root.value():.2f}", #TODO
+                    "Root value for player $(to_play()): {root.value():.2f}", #TODO
                 )
             end
 
         else
             action, root =
-                select_opponent_action(model, game, opponent, stacked_observations)
+                select_opponent_action(network, game, opponent, stacked_observations)
         end
 
-        observation, reward, done = self.game.step(action)
+        observation, reward, done = execute_step(action)
 
         if render
-            println("Played action: {self.game.action_to_string(action)}")
-            self.game.render() #TODO
+            println("Played action: {action_to_string(action)}")
+            render_game() #TODO
         end
 
         store_search_stats!(history, root, config.action_space)
@@ -140,20 +134,20 @@ function play_game(
         append!(history.action_history, action)
         append!(history.observation_history, observation)
         append!(history.reward_history, reward)
-        append!(history.to_play_history, self.game.to_play())
+        append!(history.to_play_history, to_play())
     end
     return history
 end
 
 function continuous_self_play(
-    config,
-    model,
-    shared_storage,
+    config::Config,
+    network,
+    checkpoint,
     replay_buffer,
     test_mode = False,
 )
     #while training_step @ remote processes < config.training_Steps && !terminated @remote
-    model.set_weights(weights) #TODO
+    network.set_weights(weights) #TODO
     if !test_mode
         #Explore moves during training mode
         history = play_game(
@@ -179,7 +173,7 @@ function continuous_self_play(
         )
 
         #Save to shared_storage
-        shared_storage.set_info(
+        set_info!(checkpoint,
             Dict(
                 "episode_length" => length(history.action_history) - 1,
                 "total_reward" => sum(history.reward_history),
@@ -189,7 +183,7 @@ function continuous_self_play(
         ) #TODO
 
         if 1 < length(config.players)
-            shared_storage.set_info(
+            set_info!(checkpoint,
                 Dict(
                     "muzero_reward" => sum(
                         reward for (i, reward) in enumerate(history.reward_history) if
@@ -209,11 +203,11 @@ function continuous_self_play(
         sleep(config.self_play_delay)
     end
     if !test_mode && config.ratio #TODO
-        while shared_storage.get_info(training_steps) /
-              shared_storage.get_info(num_played_steps) < config.ratio &&
-                  shared_storage.get_info.remote("training_step") <
-                  self.config.training_steps &&
-                  !shared_storage.get_info.remote("terminate")
+        while get_info(checkpoint,training_steps) /
+              get_info(checkpoint,num_played_steps) < config.ratio &&
+                  get_info(checkpoint,"training_step") <
+                  config.training_steps &&
+                  !get_info(checkpoint,"terminate")
             sleep(0.5)
         end
     end

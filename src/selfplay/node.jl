@@ -2,15 +2,14 @@ export Node, expanded, node_value, expand_node, add_exploration_noise
 using Distributions: Dirichlet
 using Parameters
 
-
 @with_kw mutable struct Node
-    visit_count::Int64
-    to_play::Int64
-    prior::Float64
-    value_sum::Float64
-    children::Dict{Int64,Node}
-    hidden_state::State
-    reward::Int64
+    visit_count::Int64 = 0
+    to_play::Int64 = -1
+    prior::Union{Float64,Nothing} = nothing
+    value_sum::Float64 = 0.0
+    children::Union{Dict{Int64,Node},Nothing} = nothing
+    hidden_state::Union{State,nothing} = nothing
+    reward::Int64 = 0
 end
 
 function expanded(node::Node)::Bool
@@ -29,52 +28,35 @@ end
 We expand a node using the value, reward and policy prediction obtained from the
 neural network.
 """
-function expand_node(node::Node, actions, to_play, reward, policy_logits, hidden_state)::Node
+function expand_node(node::Node, actions, to_play::Int64, reward::Float64, policy_logits, hidden_state::State)::Node
     policy_values = [] #TODO
     policy = Dict([a, policy_values[i] for (i, a) in actions])
-    children = Dict([
-        (action, Node(0, -node.to_play, prob, 0.0, nothing, nothing, 0.0)) for
+    node.children = Dict([
+        (action, Node( to_play=-node.to_play, prior=prob)) for
         (action, prob) in policy
     ])
-    return Node(
-        node.visit_count,
-        to_play,
-        node.prior,
-        node.value_sum,
-        children,
-        hidden_state,
-        reward,
-    )
+    node.to_play = to_play
+    node.reward = reward
+    node.hidden_state = hidden_state
+
+    return node
 end
 
 """
 At the start of each search, we add dirichlet noise to the prior of the root to
 encourage the search to explore new actions.
 """
-function add_exploration_noise(node::Node, dirichlet_α, exploration_ϵ)::Node
+function add_exploration_noise(node::Node, dirichlet_α::Float64, exploration_ϵ::Float64)::Node
     actions = collect(keys(node.children))
     noise = rand(Dirichlet(length(actions), dirichlet_α))
-    children = Dict([
+    node.children = Dict([
         (
-            action,
+            a,
             Node(
-                0,
-                -node.to_play,
-                node.children[a].prior * (1 - exploration_ϵ) + n * exploration_ϵ,
-                0.0,
-                nothing,
-                nothing,
-                0.0,
-            ),
+                to_play= -node.to_play,
+                prior = node.children[a].prior * (1 - exploration_ϵ) + n * exploration_ϵ,
+                ),
         ) for (a, n) in zip(actions, noise)
     ])
-    return Node(
-        node.visit_count,
-        to_play,
-        node.prior,
-        node.value_sum,
-        children,
-        hidden_state,
-        reward,
-    )
+    return node
 end
