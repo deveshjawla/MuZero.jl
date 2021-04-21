@@ -55,8 +55,8 @@ function get_stacked_observations(history::GameHistory, index::Int64, num_stacke
             )
         else
             previous_observation = vcat(
-                zeros(history.observation_history[index]),
-                zeros(stacked_observations[1]), #TOSEE
+                zeros(eltype(history.observation_history[index]),size(history.observation_history[index])),
+                zeros(eltype(stacked_observations[1]),size(stacked_observations[1])), #TOSEE
             )
         end
         stacked_observations = vcat(stacked_observations, previous_observation)
