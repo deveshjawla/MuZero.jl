@@ -184,7 +184,7 @@ function continuous_update_weights(
                 ),
             ) #TODO
             if config.save_model
-                save_network()
+                save_checkpoint()
             end
         end
         set_info!(

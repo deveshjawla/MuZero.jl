@@ -6,7 +6,7 @@ module SharedStorage
 
     export save_network, get_info, set_info!
 
-    function save_network(config,current_checkpoint::Dict,path=nothing)
+    function save_checkpoint(config,current_checkpoint::Dict,path=nothing)
         if !path
             path = config.results_path * "model.checkpoint"
         end

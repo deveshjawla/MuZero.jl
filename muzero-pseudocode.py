@@ -376,7 +376,7 @@ class SharedStorage(object):
             # policy -> uniform, value -> 0, reward -> 0
             return make_uniform_network()
 
-    def save_network(self, step: int, network: Network):
+    def save_checkpoint(self, step: int, network: Network):
         self._networks[step] = network
 
 
@@ -559,11 +559,11 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
 
     for i in range(config.training_steps):
         if i % config.checkpoint_interval == 0:
-            storage.save_network(i, network)
+            storage.save_checkpoint(i, network)
         batch = replay_buffer.sample_batch(
             config.num_unroll_steps, config.td_steps)
         update_weights(optimizer, network, batch, config.weight_decay)
-    storage.save_network(config.training_steps, network)
+    storage.save_checkpoint(config.training_steps, network)
 
 
 def scale_gradient(tensor, scale):

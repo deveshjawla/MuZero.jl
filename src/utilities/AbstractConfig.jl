@@ -1,9 +1,4 @@
-export Config
-
-
-using Parameters
-
-@with_kw mutable struct Config
+struct Config
     seed = 0  # Seed for numpy, torch and the game
     max_num_gpus = nothing  # Fix the maximum number of GPUs to use. It's usually faster to use a single GPU (set it to 1) if it has enough memory. nothing will use every GPUs available
 
@@ -55,24 +50,26 @@ using Parameters
     fc_reward_layers = [16]  # Define the hidden layers in the reward network
     fc_value_layers = []  # Define the hidden layers in the value network
     fc_policy_layers = []  # Define the hidden layers in the policy network
+    fc_prediction_layers=[]
+
 
     ### Training
-    results_path = path # Path to store the model weights and TensorBoard logs
+    results_path = "path" # Path to store the model weights and TensorBoard logs
     save_model = true  # Save the checkpoInt in results_path as model.checkpoInt
-    training_steps = Int(1000e3)  # Total number of training steps (ie weights update according to a batch)
+    training_steps = 10000  # Total number of training steps (ie weights update according to a batch)
     batch_size = 1024  # Number of parts of games to train on at each training step
-    checkpoInt_Interval = Int(1e3)  # Number of training steps before using the model for self-playing
+    checkpoInt_Interval = 10  # Number of training steps before using the model for self-playing
     value_loss_weight = 0.25  # Scale the value loss to avoid overfitting of the value function, paper recommends 0.25 (See paper appendix Reanalyze)
     train_on_gpu = "has_cuda()"  # Train on GPU if available
 
     optimizer = "SGD"  # "Adam" or "SGD". Paper uses SGD
-    weight_decay = 1e-4  # L2 weights regularization
+    weight_decay = 0.001  # L2 weights regularization
     momentum = 0.9  # Used only if optimizer is SGD
 
     # Exponential learning rate schedule
     lr_init = 0.05  # Initial learning rate
     lr_decay_rate = 0.1  # Set it to 1 to use a constant learning rate
-    lr_decay_steps = 350e3
+    lr_decay_steps = 350000
 
     ### Replay Buffer
     replay_buffer_size = Int(1e6)  # Number of self-play games to keep in the replay buffer
