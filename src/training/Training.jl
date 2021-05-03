@@ -1,41 +1,15 @@
-include("../selfplay/mcts.jl") #COMMENT
-include("../networks/SharedStorage.jl")#COMMENT
-include("../networks/Networks.jl")
-using .SharedStorage
+using Parameters: @with_kw
 
-include("../utilities/AbstractGame.jl")
-include("../utilities/AbstractConfig.jl")
-include("../replaybuffer/ReplayBuffer.jl")
 
-using Parameters
-
-checkpoint = Dict(
-    "weights" => nothing,
-    "optimizer_state" => nothing,
-    "total_reward" => 0,
-    "muzero_reward" => 0,
-    "opponent_reward" => 0,
-    "episode_length" => 0,
-    "mean_value" => 0,
-    "training_step" => 0,
-    "lr" => 0,
-    "total_loss" => 0,
-    "value_loss" => 0,
-    "reward_loss" => 0,
-    "policy_loss" => 0,
-    "num_played_games" => 0,
-    "num_played_steps" => 0,
-    "num_reanalysed_games" => 0,
-    "terminate" => false,
-)
-
-@with_kw mutable struct Trainer
-    model::ResNet
-    training_step = checkpoint["training_step"]
-    optimizer = nothing
+struct TrainParams
+    results_path::String = "path"
+    save_model::Bool = true
+    training_steps::Int64 = 10000
+    batch_size::Int64 = 1024
+    checkpoInt_Interval::Int64 = 10
+    value_loss_weight::Float64 = 0.25
+    train_on_gpu::String = "has_cuda()"
 end
-
-
 
 
 function loss_function(
@@ -89,7 +63,7 @@ function update_weights(config::Config, trainer::Trainer, batch::Tuple)
     end
     ## Compute losses
     value_loss, reward_loss, policy_loss = (0, 0, 0)
-    value, reward, policy_logits = predictions[0]
+    value, reward, policy_logits = predictions[1]
     # Ignore reward loss for the first batch step
     current_value_loss, _, current_policy_loss = loss_function(
         value,
@@ -153,8 +127,8 @@ function update_weights(config::Config, trainer::Trainer, batch::Tuple)
 end
 
 function continuous_update_weights(
+    rbp::ReplayBufferParams,
     config::Config,
-    replay_buffer::ReplayBuffer,
     trainer::Trainer,
 )
     # Wait for the replay buffer to be filled
@@ -162,11 +136,11 @@ function continuous_update_weights(
         sleep(0.1)
     end
 
-    next_batch = get_batch(config, buffer)
+    next_batch = get_batch(rbp,config, buffer)
     while trainer.training_step < config.training_steps &&
         !get_info(checkpoint, "terminate")
         index_batch, batch = next_batch
-        next_batch = get_batch(config, buffer)
+        next_batch = get_batch(rbp, config, buffer)
         update_lr(trainer, config)
         priorities, total_loss, value_loss, reward_loss, policy_loss =
             update_weights(config, trainer, batch)
@@ -191,7 +165,7 @@ function continuous_update_weights(
             checkpoint,
             Dict(
                 "training_step" => self.training_step,
-                "lr" => self.optimizer.param_groups[0]["lr"],
+                "lr" => self.optimizer.param_groups[1]["lr"],
                 "total_loss" => total_loss,
                 "value_loss" => value_loss,
                 "reward_loss" => reward_loss,

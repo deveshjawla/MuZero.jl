@@ -123,4 +123,3 @@ Display the game observation.
 function render_game(game::Game)
     println(game.board)
 end
-

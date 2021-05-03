@@ -14,7 +14,7 @@ struct FullyConnected
 action_space_size
 full_support_size
 representation_network
-dynamics_encoded_state_network
+dynamics_hidden_state_network
 dynamics_reward_network
 prediction_policy_network
 prediction_value_network
@@ -49,8 +49,6 @@ array_on_gpu(arr) = error("Usupported array type: ", typeof(arr))
 using Flux: relu, softmax, flatten
 using Flux: Chain, Dense, Conv, BatchNorm, SkipConnection, MeanPool, MaxPool, AdaptiveMeanPool
 import Zygote
-
-include("../utilities/AbstractConfig.jl")
 
 # Flux.@functor does not work due to Network being parametric
 function Flux.functor(nn::Net) where Net <: Network
@@ -96,11 +94,18 @@ Return a `(P, V)` triple where:
     to put weight on invalid actions (see [`evaluate`](@ref)).
   - `V` is a row vector of size `(1, batch_size)`
 """
-function forward(nn::Network, state)
-  c = nn.common(state)
-  v = nn.first_head(c)
-  p = nn.second_head(c)
-  return (p, v)
+function forward(nn::Network, input)
+  if isdefined(nn,nn.downsample)
+    input=nn.downsample(input)
+  end
+  state = nn.common(input)
+  first = nn.first_head(state)
+  if isdefined(nn, nn.second_head)
+    second = nn.second_head(state)
+    return (first, second)
+  else
+    return first
+  end
 end
 
 
@@ -174,6 +179,12 @@ Adam optimiser.
 """
 @with_kw struct Adam <: OptimiserSpec
   lr :: Float32
+  #TODO??
+  weight_decay::Float64 = 0.001
+    momentum::Float64 = 0.9
+    lr_init::Float64 = 0.05
+    lr_decay_rate::Float64 = 0.1
+    lr_decay_steps::Int64 = 350000
 end
 
 """
@@ -374,6 +385,15 @@ Hyperparameters for the simplenet architecture.
   depth_first_head :: Int = 1
   use_batch_norm :: Bool = false
   batch_norm_momentum :: Float32 = 0.6f0
+  #TODO
+  encoding_size::Int64 = 10
+    fc_representation_layers::Int64 = 256
+    fc_dynamics_layers::Int64 = 256
+    fc_reward_layers::Int64 = 256
+    fc_value_layers::Int64 = 256
+    fc_policy_layers::Int64 = 256
+    fc_prediction_layers::Int64 = 256
+
 end
 
 """
@@ -400,7 +420,7 @@ is provided for [`Network.forward`](@ref)
   second_head
 end
 
-config=Config()
+config=Config
 
 
 function init_network(config::Config,gspec::AbstractGameSpec, hyper::Type{FeedForwardHP})
@@ -446,16 +466,16 @@ PredNetHP=FeedForwardHP(width= config.width, depth_common= config.fc_policy_laye
 prediction_network= init_network(config, gspec, PredNetHP)
 
 function initial_inference(observation)
-    encoded_state= representation_network(observation)
-    value, policy= prediction_network(encoded_state)
+    hidden_state= representation_network(observation)
+    value, policy_logits= prediction_network(hidden_state)
     reward= zeros(some_size) #TODO
-    return encoded_state, value, policy, reward
+    return hidden_state, value, policy_logits, reward
 end
 
-function recurrent_inference(encoded_state,action)
-    next_encoded_state, reward = dynamics_network(encoded_state, action)
-    policy_logits, value = prediction_network(next_encoded_state)
-    return value, reward, policy_logits, next_encoded_state
+function recurrent_inference(hidden_state,action)
+    next_hidden_state, reward = dynamics_network(hidden_state, action)
+    policy_logits, value = prediction_network(next_hidden_state)
+    return value, reward, policy_logits, next_hidden_state
 end
 
 
@@ -496,7 +516,16 @@ filters per convolutional layer.
   num_second_head_filters :: Int = 2
   num_first_head_filters :: Int = 1
   batch_norm_momentum :: Float32 = 0.6f0
-  downsample::String
+#TODO add parameters for different types like representation_network, prediction_network
+  downsample::String = "resnet"
+    blocks::Int64 = 16
+    channels::Int64 = 256
+    reduced_channels_reward::Int64 = 256
+    reduced_channels_value::Int64 = 256
+    reduced_channels_policy::Int64 = 256
+    resnet_fc_reward_layers::Int64 = 256
+    resnet_fc_value_layers::Int64 = 256
+    resnet_fc_policy_layers::Int64 = 256
 end
 
 function downsample_block(size,in_channels,out_channels,bnmom)
