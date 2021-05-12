@@ -1,10 +1,3 @@
-"""
-Run in a dedicated thread to play games and save them to the replay-buffer.
-"""
-# export GameHistory, store_search_stats!, get_stacked_observations
-# export select_child, ucb_score, backpropagate, run_mcts
-
-include("ReplayBuffer.jl")
 
 """
 # Holds the Min-Max values of the tree
@@ -32,18 +25,43 @@ function normalize_tree_value(treeminmax::MinMaxStats, value::Float64)::Float64
     end
 end
 
+function get_info(current_checkpoint::Dict{String,Any}, keys::Array)::Dict{String,Any}
+    return Dict(key => current_checkpoint[key] for key in keys)
+end
+
+function set_info!(current_checkpoint::Dict{String,Any}, keys::Dict)::Dict{String,Any}
+    merge!(current_checkpoint, keys)
+    return current_checkpoint
+end
+
+"""
+Parameter to alter the visit count distribution to ensure that the action selection becomes greedier as training progresses.
+The smaller it is, the more likely the best action (ie with the highest visit count) is chosen.
+
+Returns:
+    Positive float.
+"""
+function visit_softmax_temperature_fn(trained_steps::Int64)::Float64
+    if trained_steps < 500e3
+        return 1.0
+    elseif trained_steps < 750e3
+        return 0.5
+    else
+        return 0.25
+    end
+end
 
 using Distributions: Dirichlet
-using Parameters
+using Parameters: @with_kw
 using Flux: softmax
 
 @with_kw mutable struct Node
     visit_count::Int64 = 0
     to_play::Int64 = -1
-    prior::Union{Float64,Nothing} = nothing
+    prior::Union{Float64}
     value_sum::Float64 = 0.0
     children::Union{Dict{Int64,Node},Nothing} = nothing
-    hidden_state::Union{State,nothing} = nothing
+    hidden_state::Union{State,Nothing} = nothing
     reward::Int64 = 0
 end
 
@@ -65,9 +83,9 @@ neural network.
 """
 function expand_node(node::Node, actions, to_play::Int64, reward::Float64, policy_logits, hidden_state::State)::nothing
     policy_values = softmax([policy_logits[1][a] for a in actions])
-    policy = Dict([a, policy_values[i] for (i, a) in enumerate(actions)])
+    policy = Dict(a => policy_values[i] for (i, a) in enumerate(actions))
     node.children = Dict([(action, Node(prior=prob)) for (action, prob) in policy])
-    node.to_play = to_play #TODO
+    node.to_play = to_play
     node.reward = reward
     node.hidden_state = hidden_state
 end
@@ -86,7 +104,7 @@ end
 
 
 @with_kw mutable struct GameHistory
-    observation_history::Vector{Any} = [] #TODO check types
+    observation_history::Vector{Any} = []
     action_history::Vector{Int64} = []
     reward_history::Vector{Float64} = []
     to_play_history::Vector{Int64} = []
@@ -112,7 +130,7 @@ end
 Generate a new observation with the observation at the index position
 and 'num_stacked_observations' past observations and actions stacked.
 """
-function get_stacked_observations(history::GameHistory, index::Int64, num_stacked_observations::Inf64)::Vector{Any}
+function get_stacked_observations(history::GameHistory, index::Int64, num_stacked_observations::Int64)::Vector{Any}
     # Convert to positive index
     index = mod(index, length(history.observation_history))
 
@@ -142,15 +160,6 @@ the search tree and traversing the tree according to the UCB formula until we
 reach a leaf node.
 """
 
-struct MCTSParams
-    dirichlet_α::Float64 = 0.25
-    exploration_ϵ::Float64 = 0.25
-    pb_c_base::Int64 = 19652
-    pb_c_init::Float64 = 1.25
-    discount::Float64 = 0.997
-    num_iters::Int64 = 50
-    players::Vector{Int} = collect(1:2) #TODO appears also in SelfPlayParams
-end
 
 
 using Random
@@ -159,24 +168,24 @@ rng = MersenneTwister(1234)
 """
 Select the child with the highest UCB score.
 """
-function select_child(mctsparams::MCTSParams, node::Node, treeminmax::MinMaxStats)::Tuple{Int64,Node}
-    max_ucb = maximum([ucb_score(mctsparams,node, child, treeminmax) for (action, child) in node.children])
-    action = rand(rng,[ucb_score(mctsparams,node, child, treeminmax) == max_ucb ? action : nothing for (action, child) in node.children])
+function select_child(mp::MCTSParams, node::Node, treeminmax::MinMaxStats)::Tuple{Int64,Node}
+    max_ucb = maximum([ucb_score(mp,node, child, treeminmax) for (action, child) in node.children])
+    action = rand(rng,[ucb_score(mp,node, child, treeminmax) == max_ucb ? action : nothing for (action, child) in node.children])
     return action, node.children[action]
 end
 
 """
 The score for a node is based on its value, plus an exploration bonus based on the prior.
 """
-function ucb_score(mctsparams::MCTSParams, parent::Node, child::Node, treeminmax::MinMaxStats)::Float64
-    pb_c = (log2((parent.visit_count + mctsparams.pb_c_base + 1) / mctsparams.pb_c_base)
-            + mctsparams.pb_c_init)
-    pb_c *= sqrt(parent.visit_count) / (child.visit_count + 1)
+function ucb_score(mp::MCTSParams, parent_node::Node, child::Node, treeminmax::MinMaxStats)::Float64
+    pb_c = (log2((parent_node.visit_count + mp.pb_c_base + 1) / mp.pb_c_base)
+            + mp.pb_c_init)
+    pb_c *= sqrt(parent_node.visit_count) / (child.visit_count + 1)
     prior_score = pb_c * child.prior
 
     if child.visit_count > 0
         # Mean value Q
-        value_score = normalize_tree_value(treeminmax, child.reward + (mctsparams.discount * (length(mctsparams.players) == 1 ? node_value(child) : -node_value(child))))
+        value_score = normalize_tree_value(treeminmax, child.reward + (mp.discount * (length(mp.players) == 1 ? node_value(child) : -node_value(child))))
     else
         value_score = 0
     end
@@ -187,15 +196,15 @@ end
 At the end of a simulation, we propagate the evaluation all the way up the tree
 to the root.
 """
-function backpropagate(mctsparams::MCTSParams, search_path::Vector{Node}, value::Float64, to_play::Int64, treeminmax::MinMaxStats)::nothing
-    if length(mctsparams.players) == 1
+function backpropagate(mp::MCTSParams, search_path::Vector{Node}, value::Float64, to_play::Int64, treeminmax::MinMaxStats)::nothing
+    if length(mp.players) == 1
         for node in reverse(search_path)
             node.value_sum += value
             node.visit_count += 1
-            update_tree!(treeminmax, node.reward + mctsparams.discount * node_value(node))
-            value = node.reward + mctsparams.discount * value
+            update_tree!(treeminmax, node.reward + mp.discount * node_value(node))
+            value = node.reward + mp.discount * value
         end
-    elseif length(mctsparams.players) == 2
+    elseif length(mp.players) == 2
         for node in reverse(search_path)
             if node.to_play == to_play 
                 node.value_sum += value
@@ -203,11 +212,11 @@ function backpropagate(mctsparams::MCTSParams, search_path::Vector{Node}, value:
                 node.value_sum-=value
             end
             node.visit_count += 1
-            update_tree!(treeminmax, node.reward + mctsparams.discount * node_value(node))
+            update_tree!(treeminmax, node.reward + mp.discount * node_value(node))
             if node.to_play == to_play
                 value= -node.reward
             else
-                value = node.reward + mctsparams.discount * value
+                value = node.reward + mp.discount * value
             end
         end
     else
@@ -221,59 +230,51 @@ hidden state given the current observation.
 We then run a Monte Carlo Tree Search using only action sequences and the network
 learned by the network.
 """
-function run_mcts(mctsparams::MCTSParams,
-    observation::Vector{Observation}, #TODO
+function run_mcts(mp::MCTSParams,
+    observation::Any,
     legal_actions::Vector{Int64},
     to_play::Int64,
-    exploration_noise::Bool;
-    override_root_with=nothing
+    exploration::Bool
 )::Tuple{Node,Dict{String,Number}}
-    if ≠ isnothing(override_root_with)
-        root = override_root_with
-        root_predicted_value = nothing
-    else
-        root = Node(prior = 0)
-        hidden_state, value, policy_logits, reward = initial_inference(observation)
-        root_predicted_value = support_to_scalar() #TODO
-        reward = support_to_scalar() #TODO
-        @assert legal_actions "Legal actions should not be an empty array. Got $(legal_actions)"
-        @assert set(legal_actions) ⊆ set(mctsparams.action_space) "Legal actions should be a subset of the action space."
-        expand_node(root, legal_actions, to_play, reward, policy_logits, hidden_state)
-    end
+    
+	root = Node(prior = 0.)
+	hidden_state, root_predicted_value, policy_logits, reward = initial_inference(observation)
+	@assert legal_actions "Legal actions should not be an empty array. Got $(legal_actions)"
+	@assert set(legal_actions) ⊆ set(mp.action_space) "Legal actions should be a subset of the action space."
+	expand_node(root, legal_actions, to_play, reward, policy_logits, hidden_state)
 
-    if exploration_noise
-        add_exploration_noise(root, mctsparams.dirichlet_α, mctsparams.exploration_ϵ)
+
+    if exploration
+        add_exploration_noise(root, mp.dirichlet_α, mp.exploration_ϵ)
     end
 
     treeminmax = MinMaxStats(Inf, -Inf)
 
     max_tree_depth = 0
-    for _ = 1:mctsparams.num_iters
+    for _ = 1:mp.num_iters
         virtual_to_play = to_play
         node = root
         search_path = [node]
         current_tree_depth = 0
         while expanded(node)
             current_tree_depth += 1
-            action, child = select_child(mctsparams, node, treeminmax)
+            _, child = select_child(mp, node, treeminmax)
             append!(search_path, child)
 
             # Players play turn by turn
-            if virtual_to_play + 1 < length(mctsparams.players)
-                virtual_to_play = mctsparams.players[virtual_to_play]
+            if virtual_to_play + 1 < length(mp.players)
+                virtual_to_play = mp.players[virtual_to_play]
             else
-                virtual_to_play = mctsparams.players[1]
+                virtual_to_play = mp.players[1]
             end
         end
 
         # Inside the search tree we use the dynamics function to obtain the next hidden
         # state given an action and the previous hidden state
-        parent = search_path[end-1]
-        value, reward, policy_logits, next_hidden_state = recurrent_inference(parent.hidden_state, action) #TODO
-        value = support_to_scalar() #TODO in Py basically this has to do with converting from torch to floats
-        reward = support_to_scalar() #TODO
+        parent_node = search_path[end-1]
+        value, reward, policy_logits, next_hidden_state = recurrent_inference(parent_node.hidden_state, action)
         expand_node(root, legal_actions, to_play, reward, policy_logits, next_hidden_state)
-        backpropagate(mctsparams,search_path, value, virtual_to_play, treeminmax)
+        backpropagate(mp,search_path, value, virtual_to_play, treeminmax)
         max_tree_depth = maximum(max_tree_depth, current_tree_depth)
     end
     extra_info = Dict(
@@ -283,13 +284,6 @@ function run_mcts(mctsparams::MCTSParams,
     return root, extra_info
 end
 
-struct SelfPlayParams
-    num_workers::Int64 = 350
-    selfplay_on_gpu::Bool = false
-    max_moves::Int64 = 27000
-    temperature_threshold::Nothing = nothing
-    players::Vector{Int} = collect(1:2)
-end
 
 """
 Select action according to the visit count distribution and the temperature.
@@ -314,27 +308,19 @@ end
 """
 Select opponent action for evaluating MuZero level.
 """
-function select_opponent_action(mctsparams::MCTSParams, env::AbstractEnv, opponent::String, stacked_observations::Vector{Observation})
+function select_opponent_action(mp::MCTSParams, env::AbstractEnv, opponent::String, stacked_observations::Vector{Any})
     if opponent == "human"
-        root, mcts_info = run_mcts(
-            mctsparams,
-            stacked_observations,
-            RLBase.legal_action_space(env, p),#TODO
-            RLBase.current_player(env),
-            true
-        )
+        root, mcts_info = run_mcts(mp,stacked_observations,legal_action_space(env, p),current_player(env),true)
         print("Tree depth: $(mcts_info["max_tree_depth"])")
-        print("Root value for player $(RLBase.current_player(env)): $(node_value(root))")
-        print(
-            "Player $(RLBase.current_player(env)) turn. MuZero suggests $(action_to_string(select_action(root, 0)))", #TODO
-        )
-        return human_to_action(), root #TODO
+        print("Root value for player $(current_player(env)): $(node_value(root))")
+        print("Player $(current_player(env)) turn. MuZero suggests $(action_to_string(select_action(root, 0)))")
+        return human_to_action(), root #ALEX
     elseif opponent == "expert"
-        return expert_agent(), nothing
+        return expert_agent(), nothing #ALEX
     elseif opponent == "random"
-        @assert RLBase.legal_action_space(env, p) "Legal actions should not be an empty array. Got $(legal_actions)"
-        @assert set(RLBase.legal_action_space(env, p)) ⊆ set(RLBase.action_space(env)) "Legal actions should be a subset of the action space."
-        return rand(rng, RLBase.legal_action_space(env, p)), nothing
+        @assert legal_action_space(env, p) "Legal actions should not be an empty array. Got $(legal_actions)"
+        @assert set(legal_action_space(env, p)) ⊆ set(action_space(env)) "Legal actions should be a subset of the action space."
+        return rand(rng, legal_action_space(env, p)), nothing
     else
         error("Wrong argument: opponent argument should be self, human, expert or random")
     end
@@ -344,9 +330,9 @@ end
 Play one game with actions based on the Monte Carlo tree search at each moves.
 """
 function play_game(
-    selfplayparams::SelfPlayParams,
-    mctsparams::MCTSParams,
-    config::GeneralParams,
+    sp::SelfPlayParams,
+    mp::MCTSParams,
+    gp::GeneralParams,
     env::AbstractEnv,
     temperature,
     temperature_threshold,
@@ -355,88 +341,77 @@ function play_game(
     muzero_player::Int64,
 )
     history = GameHistory()
-    observation = RLBase.reset!(env)
+    observation = reset!(env)
     append!(history.action_history, 0)
     append!(history.observation_history, observation)
     append!(history.reward_history, 0)
-    append!(history.to_play_history, RLBase.current_player(env))
+    append!(history.to_play_history, current_player(env))
 
     done = false
 
     if render
-        render_game() #TODO
+        render_game() #ALEX
     end
 
-    while !done && history.action_history <= selfplayparams.max_moves
+    while !done && history.action_history <= sp.max_moves
         @assert length(size(observation)) == 3 "Observation should be 3 dimensional instead of $(length(size(observation))) dimensionnal. Got observation of shape: $(size(observation))"
-        @assert size(observation) == config.observation_shape "Observation should match the observation_shape defined in MuZeroConfig. Expected $(config.observation_shape) but got $(size(observation))."
-        stacked_observations =
-            get_stacked_observations(history, -1, config.stacked_observations)
+        stacked_observations = get_stacked_observations(history, -1, gp.stacked_observations)
 
         # Choose the action
-        if opponent == "self" || muzero_player == RLBase.current_player(env)
-            root, mcts_info = run_mcts(
-                mctsparams,
-            stacked_observations,
-            RLBase.legal_action_space(env, p),#TODO
-            RLBase.current_player(env),
-            true
-            )
+        if opponent == "self" || muzero_player == current_player(env)
+            root, mcts_info = run_mcts(mp,stacked_observations,legal_action_space(env, p),current_player(env),true)
             action = select_action( root, !isnothing(temperature_threshold) || length(history.action_history) < temperature_threshold ? temperature : 0) #CHECK the condition
             if render
                 println("Tree depth: $(mcts_info["max_tree_depth"])")
-                println(
-                    "Root value for player $(RLBase.current_player(env)): $(node_value(root))",
-                )
+                println("Root value for player $(current_player(env)): $(node_value(root))",)
             end
-
         else
             action, root =
-                select_opponent_action(mctsparams, env, opponent, stacked_observations)
+                select_opponent_action(mp, env, opponent, stacked_observations)
         end
 
         # observation, reward, done = execute_step(action)
         observation = env(action) #execute step and return observation
-        reward = RLBase.reward(env, RLBase.current_player(env))
-        done = RLBase.is_terminated(env)
+        reward = reward(env, current_player(env))
+        done = is_terminated(env)
 
         if render
             println("Played action: {action_to_string(action)}")
-            render_game() #TODO
+            render_game() #ALEX
         end
 
-        store_search_stats!(history, root, RLBase.action_space(env))
+        store_search_stats!(history, root, action_space(env))
 
         # Next batch
         append!(history.action_history, action)
         append!(history.observation_history, observation)
         append!(history.reward_history, reward)
-        append!(history.to_play_history, RLBase.current_player(env))
+        append!(history.to_play_history, current_player(env))
     end
     return history
 end
-include("utilities/Utilities.jl")
-include("training/Training.jl")
+
 function continuous_self_play(
-    selfplayparams::SelfPlayParams,
-    mctsparams::MCTSParams,
-    config::GeneralParams,
+    sp::SelfPlayParams,
+    mp::MCTSParams,
+    gp::GeneralParams,
     env::AbstractEnv,
-    trainparams::TrainParams,
+    tp::TrainParams,
     checkpoint::Dict,
     competition_mode = false,
 )
-    while get_info(checkpoint,"training_step") < trainparams.training_steps && get_info(checkpoint,"terminate")
-        set_weights(weights) #TODO
+    while checkpoint["training_step"] < tp.training_steps && !checkpoint["terminate"]
+        Flux.loadparams!(model, checkpoint["weights"])
+		temperature=visit_softmax_temperature_fn(checkpoint["training_step"])
         if !competition_mode
             #Explore moves during training mode
             history = play_game(
-                selfplayparams,
-                mctsparams,
+                sp,
+                mp,
                 config,
                 env,
-                Utils.visit_softmax_temperature_fn(get_info(checkpoint,"training_step")),
-                config.temperature_threshold,
+                temperature,
+                gp.temperature_threshold,
                 false,
                 "self",
                 0,
@@ -445,15 +420,15 @@ function continuous_self_play(
         else
             # Take the best action (no exploration) in competition mode
             history = play_game(
-                selfplayparams,
-                mctsparams,
+                sp,
+                mp,
                 config,
                 env,
-                Utils.visit_softmax_temperature_fn(get_info(checkpoint,"training_step")),
-                config.temperature_threshold,
+                temperature,
+                gp.temperature_threshold,
                 false,
-                length(mctsparams.players) == 1 ? "self" : config.opponent,
-                config.muzero_player,
+                length(mp.players) == 1 ? "self" : gp.opponent,
+                gp.muzero_player,
             )
 
             #Save to shared_storage
@@ -461,38 +436,27 @@ function continuous_self_play(
                 Dict(
                     "episode_length" => length(history.action_history) - 1,
                     "total_reward" => sum(history.reward_history),
-                    "mean_value" =>
-                        mean([value for value in history.root_values if value]),
+                    "mean_value" => mean([value for value in history.root_values if value]),
                 ),
             )
 
-            if 1 < length(mctsparams.players)
+            if 1 < length(mp.players)
                 set_info!(checkpoint,
                     Dict(
                         "muzero_reward" => sum(
                             [reward for (i, reward) in enumerate(history.reward_history) if
-                            history.to_play_history[i] == config.muzero_player]
+                            history.to_play_history[i] == gp.muzero_player]
                         ),
                         "opponent_reward" => sum(
                             [reward for (i, reward) in enumerate(history.reward_history) if
-                            history.to_play_history[i] != config.muzero_player]
+                            history.to_play_history[i] != gp.muzero_player]
                         ),
                     ),
                 )
             end
         end
-
-        # Managing the self-play / training ratio
-        if !competition_mode && config.self_play_delay
-            sleep(config.self_play_delay)
-        end
-        if !competition_mode && !isnothing(config.ratio)
-            while get_info(checkpoint,"training_step") / get_info(checkpoint,"num_played_steps") < config.ratio && get_info(checkpoint,"training_step") < trainparams.training_steps && !get_info(checkpoint,"terminate")
-                sleep(0.5)
-            end
-        end
     end
-    close_game() #TODO
+    close_game() #ALEX : if certain conditions are/nt met then close an GC
 end
 
 end

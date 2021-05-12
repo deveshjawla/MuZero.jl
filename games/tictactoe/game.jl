@@ -25,7 +25,7 @@ function TicTacToe()
     TicTacToe(board, WHITE)
 end
 
-function RLBase.reset!(env::TicTacToe)
+function reset!(env::TicTacToe)
     fill!(env.board, false)
     env.board[:, :, 1] .= true
     env.player = WHITE
@@ -46,11 +46,11 @@ Base.isequal(a::TicTacToe, b::TicTacToe) = isequal(a.board, b.board)
 Base.to_index(::TicTacToe, ::White) = 2
 Base.to_index(::TicTacToe, ::Black) = 3
 
-RLBase.action_space(::TicTacToe) = Base.OneTo(9)
+action_space(::TicTacToe) = Base.OneTo(9)
 
-RLBase.legal_action_space(env::TicTacToe, p) = findall(legal_action_space_mask(env))
+legal_action_space(env::TicTacToe, p) = findall(legal_action_space_mask(env, p))
 
-function RLBase.legal_action_space_mask(env::TicTacToe, p)
+function legal_action_space_mask(env::TicTacToe, p)
     if is_win(env, WHITE) || is_win(env, BLACK)
         zeros(false, 9)
     else
@@ -67,19 +67,19 @@ function (env::TicTacToe)(action::CartesianIndex{2})
     return env.board
 end
 
-RLBase.current_player(env::TicTacToe) = env.player
-RLBase.players(env::TicTacToe) = (WHITE, BLACK)
+current_player(env::TicTacToe) = env.player
+players(env::TicTacToe) = (WHITE, BLACK)
 
-RLBase.state(env::TicTacToe, ::Observation{BitArray{3}}, p) = env.board
-RLBase.state_space(env::TicTacToe, ::Observation{BitArray{3}}, p) =
+state(env::TicTacToe, ::Observation{BitArray{3}}, p) = env.board
+state_space(env::TicTacToe, ::Observation{BitArray{3}}, p) =
     Space(fill(false..true, 3, 3, 3))
 
-RLBase.state(env::TicTacToe, ::Observation{Int}, p) =
+state(env::TicTacToe, ::Observation{Int}, p) =
     get_state_info()[env].index
-RLBase.state_space(env::TicTacToe, ::Observation{Int}, p) =
+state_space(env::TicTacToe, ::Observation{Int}, p) =
     Base.OneTo(length(get_state_info()))
 
-function RLBase.state(env::TicTacToe, ::Observation{String}, p)
+function state(env::TicTacToe, ::Observation{String}, p)
     buff = IOBuffer()
     for i in 1:3
         for j in 1:3
@@ -96,12 +96,12 @@ function RLBase.state(env::TicTacToe, ::Observation{String}, p)
     end
     String(take!(buff))
 end
-RLBase.state_space(env::TicTacToe, ::Observation{String}, p) = WorldSpace{String}()
+state_space(env::TicTacToe, ::Observation{String}, p) = WorldSpace{String}()
 
 
-RLBase.is_terminated(env::TicTacToe) = get_state_info()[env].is_terminated
+is_terminated(env::TicTacToe) = get_state_info()[env].is_terminated
 
-function RLBase.reward(env::TicTacToe, player)
+function reward(env::TicTacToe, player)
     if is_terminated(env)
         winner = get_state_info()[env].winner
         if isnothing(winner)
@@ -163,12 +163,11 @@ function get_state_info()
     STATE_INFO
 end
 
-RLBase.NumAgentStyle(::TicTacToe) = MultiAgent(2)
-RLBase.DynamicStyle(::TicTacToe) = SEQUENTIAL
-RLBase.ActionStyle(::TicTacToe) = FULL_ACTION_SET
-RLBase.InformationStyle(::TicTacToe) = PERFECT_INFORMATION
-RLBase.StateStyle(::TicTacToe) =
-    (Observation{String}(), Observation{Int}(), Observation{BitArray{3}}())
-RLBase.RewardStyle(::TicTacToe) = TERMINAL_REWARD
-RLBase.UtilityStyle(::TicTacToe) = ZERO_SUM
-RLBase.ChanceStyle(::TicTacToe) = DETERMINISTIC
+NumAgentStyle(::TicTacToe) = MultiAgent(2)
+DynamicStyle(::TicTacToe) = SEQUENTIAL
+ActionStyle(::TicTacToe) = FULL_ACTION_SET
+InformationStyle(::TicTacToe) = PERFECT_INFORMATION
+StateStyle(::TicTacToe) = (Observation{String}(), Observation{Int}(), Observation{BitArray{3}}())
+RewardStyle(::TicTacToe) = TERMINAL_REWARD
+UtilityStyle(::TicTacToe) = ZERO_SUM
+ChanceStyle(::TicTacToe) = DETERMINISTIC
