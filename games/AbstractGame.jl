@@ -4,7 +4,7 @@ Inherit this class for muzero to play
 """
 struct Game
     board::Array <: Any
-    player::Int64
+    player::Int
 end
 
 

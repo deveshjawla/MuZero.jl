@@ -1,3 +1,6 @@
+#Storage
+*.bin
+
 # Editors
 .vscode/
 .idea/
