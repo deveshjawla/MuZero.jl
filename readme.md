@@ -11,7 +11,13 @@ sufficiently powerful and fast to enable meaningful experiments on limited
 computing resources.
 I found the [Julia language](https://julialang.org/) to be instrumental in achieving this goal.
 
-## Training a TicTacToe Agent
+## Platform Agnostic instructions
+
+1. To install Julia on your platform, download from the appropriate mirror and add to PATH, instructions can be found [here](https://julialang.org/downloads/platform/)
+
+2. To set up Git on your computer follow the instructions [here](https://docs.gitlab.com/ee/gitlab-basics/start-using-git.html)
+
+### Training a TicTacToe Agent
 
 To download MuZero.jl and start training a TicTacToe agent with 2 threads, just run:
 
@@ -27,13 +33,13 @@ learns purely from self-play, without any form of supervision or prior knowledge
 
 ## Features
 
-* Residual Network and Fully connected network in [Flux](https://github.com/FluxML/Flux.jl)
-* Reinforcement Learning enviornment and TicTacToe example adapted from [ReinforcementLearning.jl](https://github.com/JuliaReinforcementLearning/ReinforcementLearning.jl)
-* Parallel computing natively supported by Julia
-* Multi GPU support for the training and the selfplay
-* Model weights automatically saved at checkpoints
-* Single and two player mode
-* Easily adaptable for new games
+* [x] Residual Network and Fully connected network in [Flux](https://github.com/FluxML/Flux.jl)
+* [x] Reinforcement Learning enviornment and TicTacToe example adapted from [ReinforcementLearning.jl](https://github.com/JuliaReinforcementLearning/ReinforcementLearning.jl)
+* [ ] Parallel computing natively supported by Julia
+* [ ] Multi GPU support for the training and the selfplay
+* [x] Model weights automatically saved at checkpoints
+* [x] Single and two player mode
+* [x] Easily adaptable for new games
 
 ## Games implemented
 
