@@ -13,7 +13,7 @@ end
 
 
 #this should be directly logged with TBL
-global progress_stats=Dict{String, Float32}(    
+progress_stats=Dict{String, Float32}(    
 	"episode_length" => 0,
     "total_reward" => 0,
     "muzero_reward" => 0,
@@ -25,7 +25,7 @@ global progress_stats=Dict{String, Float32}(
 	)
 	
 	#TODO instead of these dicts, make a log file
-global progress = Dict{String, Int}(
+progress = Dict{String, Int}(
 "training_step" => 0,
 "num_played_games" => 0,
 "num_played_steps" => 0,
@@ -33,14 +33,14 @@ global progress = Dict{String, Int}(
 "total_samples" => 0
 )
 
-global buffer = Dict{Int, GameHistory}()
+buffer = Dict{Int, GameHistory}()
 
 representation= init_representation(conf, hyper)
 prediction= init_prediction(conf, hyper)
 dynamics= init_dynamics(conf, hyper)
 # @info "Networks initialised"
 
-global ttt=TicTacToe()
+ttt=TicTacToe()
 
 @sync begin
 @spawn self_play(conf, hyper, representation, prediction, dynamics, ttt, progress, buffer)

@@ -6,9 +6,9 @@ Makes a single input from a pair of state and action, for dynamics network
 """
 function make_state_action(state::Array{Float32,3}, action::Int, conf::Config)::Array{Float32,3}
 	action /= length(conf.action_space)
-	action = action * ones(Float32, (conf.observation_shape[1], conf.observation_shape[2]))
+	action = action .* ones(Float32, (conf.observation_shape[1], conf.observation_shape[2]))
 	# Scale the gradient by half at the start of the dynamics function (See paper appendix Training)
-	state *= 2.0f0
+	state .*= 2.0f0
 	state_action = cat(state, action, dims=3)
 	return state_action
 end
@@ -55,7 +55,7 @@ function visit_softmax_temperature_fn(trained_steps::Int)::Float32
     end
 end
 
-using Distributions:Dirichlet
+using Distributions:Dirichlet, Categorical
 using Parameters:@with_kw
 using Flux:softmax
 
@@ -87,7 +87,7 @@ neural network.
 """
 function expand_node!(node::Node, actions, to_play::Int, reward::Float32, policy_logits::Vector{Float32}, hidden_state::Array{Float32,3})::Nothing
     policy_values = softmax([policy_logits[a] for a in actions])
-    policy = Dict(a => policy_values[i] for (i, a) in enumerate(actions))
+    policy = Dict([(a, policy_values[i]) for (i, a) in enumerate(actions)])
     node.children = Dict([(action, Node(prior=prob)) for (action, prob) in policy])
     node.to_play = to_play
     node.reward = reward
@@ -122,7 +122,9 @@ mutable struct GameHistory
     game_priority
 end
 
-
+"""
+Stores MCTS stats like `child_visits` and `root_value` to GameHistory
+"""
 function store_search_stats!(history::GameHistory, root::Node, action_space::Array{Int})
 	children=collect(values(root.children))
 	children=filter!(x->!isnothing(x), children)
@@ -136,20 +138,21 @@ end
 Generate a new observation with the observation at the index position
 and 'num_stacked_observations' past observations and actions stacked.
 """
-function get_stacked_observations(history::GameHistory, index::Int, num_stacked_observations::Int)::Array{Float32,3}
+function get_stacked_observations(conf::Config, history::GameHistory, index::Int, num_stacked_observations::Int)::Array{Float32,3}
 
-    stacked_observations = copy(history.observation_history[:,:,:,index])
+    # stacked_observations = Array{Float32}(undef, conf.observation_shape[1:2]...,0)
+	stacked_observations = copy(history.observation_history[:,:,:,index])
     for past_observation_index = index-1:-1:index - num_stacked_observations
         if 1 <= past_observation_index
             previous_observation = cat(
-				ones(eltype(stacked_observations[1]), size(stacked_observations[:,:,1,1])) .* history.action_history[past_observation_index],
-                history.observation_history[:,:,:,past_observation_index],
+				ones(Float32, conf.observation_shape[1:2]) .* history.action_history[past_observation_index],
+				history.observation_history[:,:,:,past_observation_index],
 				dims=3
 				)
-        else
+		else
             previous_observation = cat(
-				zeros(eltype(stacked_observations[1]), size(stacked_observations[:,:,1,1])),
-                zeros(eltype(history.observation_history[1]), size(history.observation_history[:,:,:,1])),
+				zeros(Float32, conf.observation_shape[1:2]),
+				zeros(Float32, conf.observation_shape),
 				dims=3
 				)
 			end
@@ -300,14 +303,14 @@ end
 
 
 """
-	Select action according to the visit count distribution and the temperature.
-	The temperature is changed dynamically with the visit_softmax_temperature function
-	in the config.
+Select action according to the visit count distribution and the temperature.
+The temperature is changed dynamically with the visit_softmax_temperature function
+in the config.
 """
 function select_action(node::Node, temperature::Float32)::Int
     visit_counts = Int32[child.visit_count for child in values(node.children)]
     actions = [action for action in keys(node.children)]
-    if temperature == 0
+    if temperature == 0.0f0
         action = actions[argmax(visit_counts)]
     elseif temperature == Inf
         action = rand(rng, actions)
@@ -347,32 +350,35 @@ Play one game with actions based on the Monte Carlo tree search at each moves.
 """
 function play_game(conf::Config, representation, prediction, dynamics, env::AbstractEnv, temperature, render::Bool, opponent::String, muzero_player::Int)::GameHistory
     history = GameHistory(Array{Float32}(undef, conf.observation_shape..., 0), Vector{Int}(), Vector{Float32}(), Vector{Int}(), Matrix{Float32}(undef, length(conf.action_space), 0), Vector{Float32}(), nothing, nothing, nothing)
-    observation = reset!(env)
-    append!(history.action_history, 0)
-    history.observation_history = cat(history.observation_history, observation, dims=ndims(observation) + 1)
-    append!(history.reward_history, 0)
-    push!(history.to_play_history, current_player(env))
-
-	reward=0.0f0
+	
     done = false
-
+	
     if render
         render_game(env)
     end
-
+	
+	observation=0
     while !done && length(history.action_history) <= conf.max_moves
+		if !isnothing(conf.temperature_threshold) && length(history.action_history) ≥ conf.temperature_threshold
+			temperature = 0.0f0
+		end
+		
+		if length(history.action_history)==0
+			observation = reset!(env)
+		end
+		p = current_player(env)
+    	history.observation_history = cat(history.observation_history, observation, dims=4)
 		# @info "Self-Playing one game: $(length(history.action_history)-1) moves played"
         @assert ndims(observation) == 3 "Observation should be 3 dimensional instead of $(ndims(observation)) dimensionnal. Got observation of shape: $(size(observation))"
-        stacked_observations = get_stacked_observations(history, lastindex(history.observation_history, 4), conf.stacked_observations)
+        stacked_observations = get_stacked_observations(conf, history, lastindex(history.observation_history, 4), conf.stacked_observations)
 
-		p = current_player(env)
         # Choose the action
         if opponent == "self" || muzero_player == p
             root, mcts_info = run_mcts(conf, representation, prediction, dynamics, stacked_observations, legal_action_space(env, p), p, true)
-            action = select_action(root, !isnothing(conf.temperature_threshold) && length(history.action_history) < conf.temperature_threshold ? temperature : 0.0f0)
+            action = select_action(root, temperature)
             if render
                 println("Tree depth: $(mcts_info["max_tree_depth"])")
-            println("Root value for player $(p): $(node_value(root))", )
+            	println("Root value for player $(p): $(node_value(root))", )
             end
         else
             action, root =
@@ -385,14 +391,13 @@ function play_game(conf::Config, representation, prediction, dynamics, env::Abst
         done = is_terminated(env) #TODO instead of initializing state info everytime 
 
         if render
-        println("Played action: $(action)")
+        	println("Played action: $(action)")
             render_game(env)
         end
 
         store_search_stats!(history, root, conf.action_space)
 
         append!(history.action_history, action)
-    	history.observation_history = cat(history.observation_history, observation, dims=ndims(observation) + 1)
         append!(history.reward_history, reward)
         push!(history.to_play_history, p)
     end
@@ -400,18 +405,13 @@ function play_game(conf::Config, representation, prediction, dynamics, env::Abst
 end
 
 function self_play(conf::Config, hyper, representation, prediction, dynamics, env::AbstractEnv, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory}, competition_mode=false)::Nothing
-    while progress["training_step"] < conf.training_steps
+    while progress["training_step"] ≤ conf.training_steps
 		training_step = progress["training_step"]
-		if training_step % conf.checkpoint_interval == 0 && progress["training_step"]>1
+		if training_step % conf.checkpoint_interval == 0 && training_step > 1
 			representation= deserialize(joinpath(conf.networks_path,"$(training_step)_representation.bin"))
 			prediction= deserialize(joinpath(conf.networks_path,"$(training_step)_prediction.bin"))
 			dynamics= deserialize(joinpath(conf.networks_path,"$(training_step)_dynamics.bin"))
-			@info "Latest Networks successfully reloaded during self-play"
-		# else
-		# 	representation= init_representation(conf, hyper)
-		# 	prediction= init_prediction(conf, hyper)
-		# 	dynamics= init_dynamics(conf, hyper)
-		# 	# @info "Networks initialised"
+			@info "Latest Networks successfully reloaded during self-play" training_step
 		end
 		
 		temperature = visit_softmax_temperature_fn(progress["training_step"])
@@ -422,7 +422,7 @@ function self_play(conf::Config, hyper, representation, prediction, dynamics, en
                 temperature,
                 false,
                 "self",
-                0,
+                conf.muzero_player,
             )
 			# @info "One episode of Self-Play finished"
             save_game(conf, history, progress, buffer)

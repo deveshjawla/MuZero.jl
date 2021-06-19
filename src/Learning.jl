@@ -278,7 +278,7 @@ function loss(conf, params, predictions::Tuple, targets::Tuple, weight_batch::An
 		reward_loss = 0.0f0
 	end
     policy_loss = logitcrossentropy(policy_logits, target_policies, agg=x->mean((sum(x,dims=2)./gradient_scale_batch).*weight_batch))
-
+	
 	loss = sum([value_loss, reward_loss, policy_loss])
 	# TODO value loss and reward loss are much smaller that the policy loss
 	# merge!(
@@ -314,7 +314,7 @@ end
 function training(conf::Config, representation, prediction, dynamics, progress::Dict{String, Int}, buffer::Dict{Int,GameHistory})::Nothing
 	
 	# Wait for the replay buffer to be filled
-    while progress["num_played_games"] < 1 # TODO, GPU should always has data available to train on.
+    while progress["num_played_games"] < 1 # TODO, GPU should always have data available to train on.
         # @info "Waiting for replay buffer to be filled"
 		sleep(0.1)
     end
@@ -326,7 +326,8 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 	
 	training_step = progress["training_step"]
 
-	while training_step < conf.training_steps
+	while training_step ≤ conf.training_steps
+		training_step += 1
         next_batch = get_batch(conf, buffer)
 		index_batch, batch = next_batch
     	observation_batch, action_batch, target_values, target_rewards, target_policies, weight_batch, gradient_scale_batch = batch
@@ -381,7 +382,7 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 		predictions = (predicted_values, predicted_rewards, predicted_policies)
 
 		# @info "Predictions and Targets generated successfully" size(target_values) size(target_rewards) size(target_policies) size(predicted_values) size(predicted_rewards) size(predicted_policies)
-		
+
 		params_representation = Flux.params(representation)
 		params_prediction = Flux.params(prediction)
 		params_dynamics = Flux.params(dynamics)
@@ -409,18 +410,17 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 
 		priorities = (abs.(predicted_values - target_values)).^conf.PER_alpha
 
-		training_step += 1
-
-		@info "Training progress at" training_step
-		println(progress)
-
+		
+		# @info "Training progress at" training_step
+		# println(progress)
+		
 		if conf.PER
             # Save new priorities in the replay buffer (See https://arxiv.org/abs/1803.00933)
             update_priorities!(buffer, priorities, index_batch)
         end
-
+		
 		# Save to the shared storage(disk) #TODO make them availbal on memory
-        if training_step % conf.checkpoint_interval == 0 && conf.save_model_at_checkpoint
+        if training_step % conf.checkpoint_interval == 0 && training_step > 1 
 			representation= cpu(representation)
 			prediction= cpu(prediction)
 			dynamics= cpu(dynamics)
@@ -428,7 +428,6 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 			serialize(joinpath(conf.networks_path,"$(training_step)_prediction.bin"), prediction)
 			serialize(joinpath(conf.networks_path,"$(training_step)_dynamics.bin"), dynamics)
         end
-
 		progress["training_step"] = training_step
 	end
 	return nothing

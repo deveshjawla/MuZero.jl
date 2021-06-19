@@ -171,7 +171,7 @@ end
 
 function get_batch(conf::Config, buffer::Dict{Int,GameHistory})::Tuple{Vector{Tuple{Int64,Float32}},Tuple{Array{Float32,4},Matrix{Float32},Matrix{Float32},Matrix{Float32},Array{Float32,3},Any,Vector{Float32}}}
     total_samples = sum([length(history.root_values) for history in values(buffer)])
-    @info "Replay buffer initialized with $(total_samples) samples"
+    # @info "Replay buffer initialized with $(total_samples) samples"
     index_batch = Vector{Tuple{Int,Float32}}()
 	observation_batch = Array{Float32}(undef, conf.observation_shape[1],conf.observation_shape[2], (conf.observation_shape[3]*(conf.stacked_observations+1)+conf.stacked_observations), 0)
 	action_batch = Array{Float32}(undef, conf.num_unroll_steps+1, 0)
@@ -188,12 +188,12 @@ function get_batch(conf::Config, buffer::Dict{Int,GameHistory})::Tuple{Vector{Tu
         target_values, target_rewards, target_policies, actions = make_target(conf, history, game_pos) # unrolls each game sample for num_unroll_steps
         push!(index_batch, (game_id, game_pos))
 		# @info "Empty batch and Target sizes are:" size(observation_batch) size(action_batch)  size(reward_batch) size(value_batch ) size(policy_batch) size(gradient_scale_batch) size(target_values) size(target_rewards) size(target_policies) size(actions)
-        observation_batch = cat(observation_batch, get_stacked_observations(history, game_pos, conf.stacked_observations), dims=ndims(observation_batch))
+        observation_batch = cat(observation_batch, get_stacked_observations(conf, history, game_pos, conf.stacked_observations), dims=ndims(observation_batch))
         action_batch = hcat(action_batch, actions)
         reward_batch = hcat(reward_batch, target_rewards)
         value_batch = hcat(value_batch, target_values)
         policy_batch = cat(policy_batch, target_policies, dims=ndims(target_policies) + 1)
-        push!(gradient_scale_batch, minimum([conf.num_unroll_steps, length(history.action_history) - game_pos]))
+        push!(gradient_scale_batch, minimum([conf.num_unroll_steps, length(history.action_history)+1 - game_pos]))
         conf.PER ? push!(weight_batch, 1 / (total_samples * game_prob * pos_prob)) : nothing
     end
     conf.PER ? weight_batch ./= maximum(weight_batch) : nothing

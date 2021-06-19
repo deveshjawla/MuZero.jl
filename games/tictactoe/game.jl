@@ -64,8 +64,6 @@ RLBase.state_space(env::TicTacToe, ::Observation{Int}, p) =
 
 RLBase.state_space(env::TicTacToe, ::Observation{String}, p) = WorldSpace{String}()
 
-Observation(env::TicTacToe)= env.board
-
 function RLBase.state(env::TicTacToe, ::Observation{String}, p)
     buff = IOBuffer()
     for i in 1:3
@@ -118,7 +116,7 @@ end
 
 function get_tic_tac_toe_state_info()
     if isempty(TIC_TAC_TOE_STATE_INFO)
-        @info "initializing state info..."
+        # @info "initializing state info..."
         t = @elapsed begin
             n = 1
             root = TicTacToe()
@@ -143,7 +141,7 @@ function get_tic_tac_toe_state_info()
                 end
             end
         end
-        @info "finished initializing state info in $t seconds"
+        # @info "finished initializing state info in $t seconds"
     end
     TIC_TAC_TOE_STATE_INFO
 end

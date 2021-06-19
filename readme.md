@@ -1,7 +1,6 @@
 # MuZero.jl
 
-This package provides a _generic_, _simple_ and _fast_ implementation of
-Deepmind's MuZero algorithm:
+This package provides the core MuZero algorithm in Julia Language:
 
 [MuZero](https://arxiv.org/abs/1911.08265) is a state of the art RL algorithm for board games (Chess, Go, ...) and Atari games.
 It is the successor to [AlphaZero](https://arxiv.org/abs/1712.01815) but without any knowledge of the environment underlying dynamics. MuZero learns a model of the environment and uses an internal representation that contains only the useful information for predicting the reward, value, policy and transitions.
@@ -20,7 +19,7 @@ To download MuZero.jl and start training a TicTacToe agent with 2 threads, just 
 git clone https://github.com/deveshjawla/MuZero.jl
 cd MuZero.jl
 julia --project -e 'import Pkg; Pkg.instantiate()'
-julia --project -t 2 ./games/tictactoe/main.jl
+julia --project -t 3 ./games/tictactoe/main.jl
 ```
 
 Note that the MuZero agent is not exposed to the baselines during training and
@@ -46,8 +45,7 @@ You can adapt the configurations of each game by editing the `Config` of the `pa
 
 ## Contribution Guide
 
-I would like to invite you to contribute to this project by attacking any of the following areas. It is absolutely essential to have an easy to use __UI__ which will encourage further experimentation and attract High-Performance software development in Julia Language, therefore in the next versions of this software we will try to implement it first. The __User Interface and Benchmarking__ may be easily adapted from Jonathan Laurent's [AlphaZero.jl](https://github.com/jonathan-laurent/AlphaZero.jl).
-
+I would like to invite you to contribute to this project by addressing any of the following points:
 * _User Interface_: Session management, track Learning Performance with TensorBoard, and Diagnostic tools to understand the learned model
 * _Benchmarking_: Interface and tools for Benchmarking against Perfect solvers, MCTS Only or Network Only players.
 * _Logging Tools_: To track code performance
@@ -56,6 +54,8 @@ I would like to invite you to contribute to this project by attacking any of the
 * _Hyper-Parameter Search_
 * _Support for Continuous action spaces_
 * _Support of New environments_: Zero sum games, RL, Control problems etc.
+
+The next aim for me would be to implement an easy to use Interface and this could be expected in v0.4.0. The __User Interface and Benchmarking__ will most likely be adapted from Jonathan Laurent's [AlphaZero.jl](https://github.com/jonathan-laurent/AlphaZero.jl).
 
 ## Acknowledgements and Citation
 

@@ -6,7 +6,7 @@ using Parameters:@with_kw
     action_space
 	players
 	stacked_observations::Int # Number of previous observations and previous actions to add to the current observation
-    muzero_player::Int = 0 # Turn Muzero begins to play (0: MuZero plays first, 1: MuZero plays second)
+    muzero_player::Int = 1 # Turn Muzero begins to play (1: MuZero plays first, 2: MuZero plays second)
     opponent::String = "expert" # Hard coded agent that MuZero faces to assess its progress in multiplayer games. It doesn't influence training. None, "random" or "expert" if implemented in the Game class
 	intermediate_rewards::Bool = false
 
@@ -30,7 +30,6 @@ using Parameters:@with_kw
 
     results_path::String = mkpath("./results")
     networks_path::String = mkpath("./networks")
-    save_model_at_checkpoint::Bool = true # Save the checkpoint in results_path as model.checkpoint
     training_steps::Int # Total number of training steps (ie weights update according to a batch)
     batch_size::Int # Number of parts of games to train on at each training step
     checkpoint_interval::Int = 10 # Number of training steps before using the model for self-playing
