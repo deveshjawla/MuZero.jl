@@ -14,13 +14,13 @@ I found the [Julia language](https://julialang.org/) to be instrumental in achie
 
 ## Training a TicTacToe Agent
 
-To download MuZero.jl and start training a TicTacToe agent, just run:
+To download MuZero.jl and start training a TicTacToe agent with 2 threads, just run:
 
 ```sh
 git clone https://github.com/deveshjawla/MuZero.jl
 cd MuZero.jl
 julia --project -e 'import Pkg; Pkg.instantiate()'
-julia --project -e './games/tictactoe/main.jl'
+julia --project -t 2 ./games/tictactoe/main.jl
 ```
 
 Note that the MuZero agent is not exposed to the baselines during training and
