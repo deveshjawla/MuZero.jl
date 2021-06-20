@@ -330,9 +330,9 @@ function select_opponent_action(conf::Config, representation, prediction, dynami
 		p = current_player(env)
 		las = legal_action_space(env, p)
         root, mcts_info = run_mcts(conf, representation, prediction, dynamics, stacked_observations, las, p, true)
-        print("Tree depth: $(mcts_info["max_tree_depth"])")
-        print("Root value for player $(p): $(node_value(root))")
-        print("Player $(p) turn. MuZero suggests $(select_action(root, 0))")
+        print("Tree depth: $(mcts_info["max_tree_depth"])\n")
+        print("Root value for player $(p): $(node_value(root))\n")
+        print("Player $(p) turn. MuZero suggests $(select_action(root, 0.0f0))\n")
         return human_input(), root
     elseif opponent == "expert"
         return expert_agent(), nothing # TODO
@@ -404,7 +404,7 @@ function play_game(conf::Config, representation, prediction, dynamics, env::Abst
     return history
 end
 
-function self_play(conf::Config, hyper, representation, prediction, dynamics, env::AbstractEnv, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory}, competition_mode=false)::Nothing
+function self_play(conf::Config, representation, prediction, dynamics, env::AbstractEnv, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory})::Nothing
     while progress["training_step"] ≤ conf.training_steps
 		training_step = progress["training_step"]
 		if training_step % conf.checkpoint_interval == 0 && training_step > 1
@@ -415,7 +415,6 @@ function self_play(conf::Config, hyper, representation, prediction, dynamics, en
 		end
 		
 		temperature = visit_softmax_temperature_fn(progress["training_step"])
-        if !competition_mode
             # Explore moves during training mode
             history = play_game(conf, representation, prediction, dynamics,
                 env,
@@ -426,15 +425,7 @@ function self_play(conf::Config, hyper, representation, prediction, dynamics, en
             )
 			# @info "One episode of Self-Play finished"
             save_game(conf, history, progress, buffer)
-        else
-            # Take the best action (no exploration) in competition mode
-            history = play_game(conf, representation, prediction, dynamics,
-                env,
-                temperature,
-                false,
-                length(conf.players) == 1 ? "self" : conf.opponent,
-                conf.muzero_player,
-            )
+            
 			# @info "One episode of Self-Play finished"
 
 
@@ -461,6 +452,17 @@ function self_play(conf::Config, hyper, representation, prediction, dynamics, en
             #         ),
             #     )
             # end
-        end
     end
+end
+
+function competitive_play(conf::Config, representation, prediction, dynamics, env::AbstractEnv, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory})
+# Take the best action (no exploration) in competition mode
+history = play_game(conf, representation, prediction, dynamics,
+	env,
+	0.0f0,
+	true,
+	length(conf.players) == 1 ? "self" : "human",
+	conf.muzero_player,
+)
+save_game(conf, history, progress, buffer)
 end

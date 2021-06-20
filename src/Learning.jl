@@ -400,6 +400,7 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 			loss(conf, params_dynamics, predictions, targets, weight_batch, gradient_scale_batch) 
 		end
 
+		@info "Training Progress" training_step
 		@info "Representation loss =" l_representation
 		@info "Prediction loss =" l_prediction
 		@info "Dynamics loss=" l_dynamics
@@ -409,10 +410,6 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 		Flux.update!(optimiser, params_dynamics, grads_dynamics)
 
 		priorities = (abs.(predicted_values - target_values)).^conf.PER_alpha
-
-		
-		# @info "Training progress at" training_step
-		# println(progress)
 		
 		if conf.PER
             # Save new priorities in the replay buffer (See https://arxiv.org/abs/1803.00933)

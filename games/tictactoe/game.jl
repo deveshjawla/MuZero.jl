@@ -193,7 +193,8 @@ function render_game(env::AbstractEnv; with_position_names=true, botmargin=true)
   	botmargin && print("\n")
 end
 
-function human_input()
+function human_input()::Int
 	print("Please take an action:\n")
-	return parse(Int, readline())
+	action_taken = parse(Int, readline())
+	return action_taken
 end

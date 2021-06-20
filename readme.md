@@ -31,6 +31,12 @@ julia --project -t 3 ./games/tictactoe/main.jl
 Note that the MuZero agent is not exposed to the baselines during training and
 learns purely from self-play, without any form of supervision or prior knowledge.
 
+### Playing a game against the trained MuZero
+
+```sh
+julia --project ./games/tictactoe/play.jl
+```
+
 ## Features
 
 * [x] Residual Network and Fully connected network in [Flux](https://github.com/FluxML/Flux.jl)

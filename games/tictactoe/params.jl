@@ -9,6 +9,7 @@ conf = Config(
 	num_unroll_steps = 3,
 	td_steps = 3,
 	PER = false,
+	opponent= "human",
 	training_steps = 1000,
 	batch_size = 32,
 	num_iters = 10
