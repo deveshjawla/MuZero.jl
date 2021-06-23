@@ -11,29 +11,13 @@ include("game.jl")
 include("params.jl")
 end
 
+lp=LearningProgress(0)
+buffer_stats= BufferStats(0,0,0,0)
+"""
+Initial Buffer, Used in self-play first to save_game then in replay buffer and learning
+"""
+buffer = Dict{Int, GameHistory}() #TODO Start saving Buffer to disk at periodic intervals after a certain stage in the training process
 
-#this should be directly logged with TBL
-progress_stats=Dict{String, Float32}(    
-	"episode_length" => 0,
-    "total_reward" => 0,
-    "muzero_reward" => 0,
-    "opponent_reward" => 0,
-    "mean_value" => 0,
-    "total_loss" => 0,
-    "value_loss" => 0,
-    "reward_loss" => 0,
-	)
-	
-	#TODO instead of these dicts, make a log file
-progress = Dict{String, Int}(
-"training_step" => 0,
-"num_played_games" => 0,
-"num_played_steps" => 0,
-"num_reanalysed_games" => 0,
-"total_samples" => 0
-)
-
-buffer = Dict{Int, GameHistory}()
 
 representation= init_representation(conf, hyper)
 prediction= init_prediction(conf, hyper)
@@ -42,10 +26,13 @@ dynamics= init_dynamics(conf, hyper)
 
 ttt=TicTacToe()
 
-@sync begin
-@spawn self_play(conf, hyper, representation, prediction, dynamics, ttt, progress, buffer)
-@spawn training(conf, representation, prediction, dynamics, progress, buffer) 
+@async begin
+@spawn self_play(conf, representation, prediction, dynamics, ttt, buffer)
+@spawn training(conf, representation, prediction, dynamics, buffer) 
 end
+
+
+
 # include("./src/MuZero.jl")
 # using .MuZero
 # include("./games/tictactoe/game.jl")

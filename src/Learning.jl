@@ -281,15 +281,6 @@ function loss(conf, params, predictions::Tuple, targets::Tuple, weight_batch::An
 	
 	loss = sum([value_loss, reward_loss, policy_loss])
 	# TODO value loss and reward loss are much smaller that the policy loss
-	# merge!(
-    #         progress_stats,
-    #         Dict(
-    #             "total_loss" => loss,
-    #             "value_loss" => value_loss,
-    #             "reward_loss" => reward_loss,
-    #             "policy_loss" => policy_loss,
-    #         ),
-    #     )
 	
 	#loss + L2
     return loss + sum(sqnorm, params)
@@ -311,10 +302,9 @@ function make_dynamics_input(states::Array{Float32,4},actions::Vector{Float32},c
 	return state_actions
 end
 
-function training(conf::Config, representation, prediction, dynamics, progress::Dict{String, Int}, buffer::Dict{Int,GameHistory})::Nothing
+function training(conf::Config, representation, prediction, dynamics, buffer::Dict{Int,GameHistory})::Nothing
 	
-	# Wait for the replay buffer to be filled
-    while progress["num_played_games"] < 1 # TODO, GPU should always have data available to train on.
+    while buffer_stats.num_played_games < 1 # TODO, GPU should always have data available to train on.
         # @info "Waiting for replay buffer to be filled"
 		sleep(0.1)
     end
@@ -324,10 +314,8 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 	optimiser = Flux.ADAMW()
   	schedule = Stateful(Cos(λ0=1e-4, λ1=1e-2, period=10))
 	
-	training_step = progress["training_step"]
-
-	while training_step ≤ conf.training_steps
-		training_step += 1
+	while lp.training_step ≤ conf.training_steps
+		lp.training_step += 1
         next_batch = get_batch(conf, buffer)
 		index_batch, batch = next_batch
     	observation_batch, action_batch, target_values, target_rewards, target_policies, weight_batch, gradient_scale_batch = batch
@@ -342,14 +330,6 @@ function training(conf::Config, representation, prediction, dynamics, progress::
         # weight_batch, gradient_scale_batch: 1, batch_size
 
     	priorities = zeros(eltype(target_values), size(target_values))
-
-		# # Laod the latest saved networks
-		# if training_step % conf.checkpoint_interval == 0 && progress["training_step"]>1
-		# 	representation= deserialize(joinpath(conf.networks_path,"$(training_step)_representation.bin"))
-		# 	prediction= deserialize(joinpath(conf.networks_path,"$(training_step)_prediction.bin"))
-		# 	dynamics= deserialize(joinpath(conf.networks_path,"$(training_step)_dynamics.bin"))
-		# 	@info "Latest Networks successfully reloaded during training"
-        # end
 
 		## Generate predictions, first for the observation then for num_unroll_steps*hidden_states
 		hidden_state = representation(observation_batch)
@@ -400,7 +380,7 @@ function training(conf::Config, representation, prediction, dynamics, progress::
 			loss(conf, params_dynamics, predictions, targets, weight_batch, gradient_scale_batch) 
 		end
 
-		@info "Training Progress" training_step
+		@info "Training Progress" lp.training_step
 		@info "Representation loss =" l_representation
 		@info "Prediction loss =" l_prediction
 		@info "Dynamics loss=" l_dynamics
@@ -417,15 +397,14 @@ function training(conf::Config, representation, prediction, dynamics, progress::
         end
 		
 		# Save to the shared storage(disk) #TODO make them availbal on memory
-        if training_step % conf.checkpoint_interval == 0 && training_step > 1 
+        if lp.training_step % conf.checkpoint_interval == 0 && lp.training_step > 1 
 			representation= cpu(representation)
 			prediction= cpu(prediction)
 			dynamics= cpu(dynamics)
-			serialize(joinpath(conf.networks_path,"$(training_step)_representation.bin"), representation)
-			serialize(joinpath(conf.networks_path,"$(training_step)_prediction.bin"), prediction)
-			serialize(joinpath(conf.networks_path,"$(training_step)_dynamics.bin"), dynamics)
+			serialize(joinpath(conf.networks_path,"$(lp.training_step)_representation.bin"), representation)
+			serialize(joinpath(conf.networks_path,"$(lp.training_step)_prediction.bin"), prediction)
+			serialize(joinpath(conf.networks_path,"$(lp.training_step)_dynamics.bin"), dynamics)
         end
-		progress["training_step"] = training_step
 	end
 	return nothing
 end

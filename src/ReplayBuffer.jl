@@ -115,7 +115,7 @@ function sample_game(conf::Config, buffer::Dict{Int,GameHistory}, force_uniform=
     else
         game_index = rand(1:length(buffer))
     end
-    game_id = progress["num_played_games"] - length(buffer) + game_index
+    game_id = buffer_stats.num_played_games - length(buffer) + game_index
     return game_id, buffer[game_id], game_prob
 end
 
@@ -123,7 +123,7 @@ end
 Saves history in buffer
 When using PER, it sets the initial priorities in history
 """
-function save_game(conf::Config, history::GameHistory, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory})
+function save_game(conf::Config, history::GameHistory, buffer::Dict{Int,GameHistory})
     if conf.PER
 		# Initial priorities for the prioritized replay (See paper appendix Training)
 		priorities = Vector{Float32}()
@@ -134,14 +134,14 @@ function save_game(conf::Config, history::GameHistory, progress::Dict{String,Int
 		history.priorities = priorities
 		history.game_priority = maximum(history.priorities)
 	end
-	buffer[progress["num_played_games"]] = history
-	progress["num_played_games"] += 1
-	progress["num_played_steps"] += length(history.root_values)
-	progress["total_samples"] += length(history.root_values)
+	buffer[buffer_stats.num_played_games] = history
+	buffer_stats.num_played_games += 1
+	buffer_stats.num_played_steps += length(history.root_values)
+	buffer_stats.total_samples += length(history.root_values)
 
 	if conf.replay_buffer_size < length(buffer)
-		del_id = progress["num_played_games"] - length(buffer)
-		progress["total_samples"] -= length(buffer[del_id].root_values)
+		del_id = buffer_stats.num_played_games - length(buffer)
+		buffer_stats.total_samples -= length(buffer[del_id].root_values)
 		delete!(buffer, del_id)
 	end
 end

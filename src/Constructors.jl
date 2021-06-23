@@ -36,6 +36,21 @@ using Parameters:@with_kw
     value_loss_weight::Float32 = 0.25 # Scale the value loss to avoid overfitting of the value function, paper recommends 0.25 (See paper appendix Reanalyze)
 end
 
+"""
+Stores info about the Buffer, gets modified by the sample_game and save_game functions
+"""
+mutable struct BufferStats #TODO use better way of logging for eg. log to file
+	num_played_games::Int
+	num_played_steps::Int
+	num_reanalysed_games::Int
+	total_samples::Int
+end
+
+
+mutable struct LearningProgress
+	training_step::Int
+end
+
 @with_kw struct FeedForwardHP
 	width_hidden::Int
 	depth_representation::Int

@@ -404,65 +404,37 @@ function play_game(conf::Config, representation, prediction, dynamics, env::Abst
     return history
 end
 
-function self_play(conf::Config, representation, prediction, dynamics, env::AbstractEnv, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory})::Nothing
-    while progress["training_step"] ≤ conf.training_steps
-		training_step = progress["training_step"]
-		if training_step % conf.checkpoint_interval == 0 && training_step > 1
-			representation= deserialize(joinpath(conf.networks_path,"$(training_step)_representation.bin"))
-			prediction= deserialize(joinpath(conf.networks_path,"$(training_step)_prediction.bin"))
-			dynamics= deserialize(joinpath(conf.networks_path,"$(training_step)_dynamics.bin"))
-			@info "Latest Networks successfully reloaded during self-play" training_step
+function self_play(conf::Config, representation, prediction, dynamics, env::AbstractEnv, buffer::Dict{Int,GameHistory})::Nothing
+    while lp.training_step ≤ conf.training_steps
+		if lp.training_step % conf.checkpoint_interval == 0 && lp.training_step > 1
+			representation= deserialize(joinpath(conf.networks_path,"$(lp.training_step)_representation.bin"))
+			prediction= deserialize(joinpath(conf.networks_path,"$(lp.training_step)_prediction.bin"))
+			dynamics= deserialize(joinpath(conf.networks_path,"$(lp.training_step)_dynamics.bin"))
+			@info "Latest Networks successfully reloaded during self-play" lp.training_step
 		end
 		
-		temperature = visit_softmax_temperature_fn(progress["training_step"])
-            # Explore moves during training mode
-            history = play_game(conf, representation, prediction, dynamics,
-                env,
-                temperature,
-                false,
-                "self",
-                conf.muzero_player,
-            )
-			# @info "One episode of Self-Play finished"
-            save_game(conf, history, progress, buffer)
-            
-			# @info "One episode of Self-Play finished"
-
-
-            # Save to shared_storage
-            # merge!(progress_stats,
-            #     Dict(
-            #         "episode_length" => length(history.action_history) - 1,
-            #         "total_reward" => sum(history.reward_history),
-            #         "mean_value" => mean([value for value in history.root_values if value]),
-            #     ),
-            # )
-
-            # if 1 < length(conf.players)
-            #     merge!(progress_stats,
-            #         Dict(
-            #             "muzero_reward" => sum(
-            #                 [reward for (i, reward) in enumerate(history.reward_history) if
-            #                 history.to_play_history[i] == conf.muzero_player]
-            #             ),
-            #             "opponent_reward" => sum(
-            #                 [reward for (i, reward) in enumerate(history.reward_history) if
-            #                 history.to_play_history[i] != conf.muzero_player]
-            #             ),
-            #         ),
-            #     )
-            # end
+		temperature = visit_softmax_temperature_fn(lp.training_step)
+		# Explore moves during training mode
+		history = play_game(conf, representation, prediction, dynamics,
+			env,
+			temperature,
+			false,
+			"self",
+			conf.muzero_player,
+		)
+		# @info "One episode of Self-Play finished"
+		save_game(conf, history, buffer)
     end
 end
 
-function competitive_play(conf::Config, representation, prediction, dynamics, env::AbstractEnv, progress::Dict{String,Int}, buffer::Dict{Int,GameHistory})
+function competitive_play(conf::Config, representation, prediction, dynamics, env::AbstractEnv, buffer::Dict{Int,GameHistory})
 # Take the best action (no exploration) in competition mode
 history = play_game(conf, representation, prediction, dynamics,
 	env,
 	0.0f0,
 	true,
-	length(conf.players) == 1 ? "self" : "human",
+	length(conf.players) == 1 ? "self" : conf.opponent,
 	conf.muzero_player,
 )
-save_game(conf, history, progress, buffer)
+# save_game(conf, history, buffer)
 end
