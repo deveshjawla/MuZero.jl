@@ -2,7 +2,7 @@
 The value target is the discounted root value of the search tree td_steps into the
 future, plus the discounted sum of all rewards until then.
 """
-function compute_target_value(conf::Config, history::GameHistory, index::Int)::Float32
+function compute_target_value(history::GameHistory, index::Int)::Float32
     bootstrap_index = index + conf.td_steps
     if bootstrap_index < length(history.root_values)
         root_values = (isnothing(history.reanalysed_predicted_root_values) ? history.root_values : history.reanalysed_predicted_root_values )
@@ -22,12 +22,12 @@ end
 """
 Generate targets for every unroll steps.
 """
-function make_target(conf::Config, history::GameHistory, state_index::Int)::Tuple{Vector{Float32},Vector{Float32},Array{Float32,2},Vector{Int}}
+function make_target(history::GameHistory, state_index::Int)::Tuple{Vector{Float32},Vector{Float32},Array{Float32,2},Vector{Int}}
     target_values, target_rewards, target_policies, actions = Vector{Float32}(), Vector{Float32}(), Matrix{Float32}(undef, length(conf.action_space), 0), Vector{Int}()
 	# @info "make_target" state_index conf.num_unroll_steps
     for current_index = state_index:state_index + conf.num_unroll_steps # returns vectors of length num_unroll_steps+1
         if current_index < length(history.root_values)
-			value = compute_target_value(conf, history, current_index)
+			value = compute_target_value(history, current_index)
             append!(target_values, value)
             append!(target_rewards, history.reward_history[current_index])
             target_policies = hcat(target_policies, history.child_visits[:, current_index])
@@ -53,7 +53,7 @@ end
 """
 Used in Reanalyze
 """
-function update_history!(conf::Config, history::GameHistory, buffer::Dict{Int,GameHistory}, game_id::Int)::Nothing
+function update_history!(history::GameHistory, buffer::Dict{Int,GameHistory}, game_id::Int)::Nothing
     # The element could have been removed since its selection and training
 	# Checks if the game_id still in buffer, where buffer keys are sorted Ints
 	if first(keys(buffer)) ≤ game_id
@@ -63,13 +63,14 @@ function update_history!(conf::Config, history::GameHistory, buffer::Dict{Int,Ga
 		end
 		buffer[game_id] = history
 	end
+	return nothing
 end
 
 """
 Sample position from game either uniformly or according to some priority.
 See paper appendix Training.
 """
-function sample_position(conf::Config, history::GameHistory, force_uniform=false)::Tuple{Int,Float32}
+function sample_position(history::GameHistory, force_uniform=false)::Tuple{Int,Float32}
     position_prob = 0.0f0
     if conf.PER && !force_uniform
         position_probs = history.priorities ./ sum(history.priorities)
@@ -82,7 +83,10 @@ function sample_position(conf::Config, history::GameHistory, force_uniform=false
     return position_index, position_prob
 end
 
-function sample_n_games(conf::Config, buffer::Dict{Int,GameHistory}, force_uniform=false)::Vector{Tuple{Int,GameHistory,Float32}}
+"""
+Used in get_batch, either samples `n` games according to PER or randomly
+"""
+function sample_n_games(buffer::Dict{Int,GameHistory}, force_uniform=false)::Vector{Tuple{Int,GameHistory,Float32}}
     if conf.PER && !force_uniform
         game_id_list = Vector{Int}()
         game_probs = Vector{Float32}()
@@ -102,7 +106,10 @@ function sample_n_games(conf::Config, buffer::Dict{Int,GameHistory}, force_unifo
     return n_games
 end
 
-function sample_game(conf::Config, buffer::Dict{Int,GameHistory}, force_uniform=false)::Tuple{Int,GameHistory,Float32}
+"""
+Used in PER
+"""
+function sample_game(buffer::Dict{Int,GameHistory}, force_uniform=false)::Tuple{Int,GameHistory,Float32}
     game_prob = 0.0f0
     if conf.PER && !force_uniform
         game_probs = Vector{Float32}()
@@ -115,7 +122,7 @@ function sample_game(conf::Config, buffer::Dict{Int,GameHistory}, force_uniform=
     else
         game_index = rand(1:length(buffer))
     end
-    game_id = buffer_stats.num_played_games - length(buffer) + game_index
+    game_id = fetch(num_played_games) - length(buffer) + game_index
     return game_id, buffer[game_id], game_prob
 end
 
@@ -123,32 +130,39 @@ end
 Saves history in buffer
 When using PER, it sets the initial priorities in history
 """
-function save_game(conf::Config, history::GameHistory, buffer::Dict{Int,GameHistory})
+function save_game(history::GameHistory, remote_buffer::RemoteChannel{BufferChannel}, num_played_games,
+num_played_steps,
+total_samples,)
     if conf.PER
 		# Initial priorities for the prioritized replay (See paper appendix Training)
 		priorities = Vector{Float32}()
 		for (i, root_value) in enumerate(history.root_values)
-			priority =  abs(root_value - compute_target_value(conf, history, i))^conf.PER_alpha
+			priority =  abs(root_value - compute_target_value(history, i))^conf.PER_alpha
 			append!(priorities, priority)
 		end
 		history.priorities = priorities
 		history.game_priority = maximum(history.priorities)
 	end
-	buffer[buffer_stats.num_played_games] = history
-	buffer_stats.num_played_games += 1
-	buffer_stats.num_played_steps += length(history.root_values)
-	buffer_stats.total_samples += length(history.root_values)
 
-	if conf.replay_buffer_size < length(buffer)
-		del_id = buffer_stats.num_played_games - length(buffer)
-		buffer_stats.total_samples -= length(buffer[del_id].root_values)
-		delete!(buffer, del_id)
+	len_hist= length(history.root_values)
+
+	update_remote_counter!(num_played_games, 1)
+	update_remote_counter!(num_played_steps, len_hist)
+	update_remote_counter!(total_samples, len_hist)
+	num_played_games_ = fetch(num_played_games)
+
+	remote_buffer=put!(remote_buffer, num_played_games_, history)
+
+	if conf.replay_buffer_size < num_played_games_
+		del_id = num_played_games_ - conf.replay_buffer_size
+		removed_hist= take!(remote_buffer, del_id)
+		update_remote_counter!(total_samples, -(length(removed_hist.root_values)))
 	end
 end
 
 
 """
-Used in Learning to Update game and position priorities with priorities calculated during the training.
+Used in Learning(only when PER) to Update game and position priorities with priorities calculated during the training.
 See Distributed Prioritized Experience Replay (https://arxiv.org/abs/1803.00933)
 """
 function update_priorities!(buffer::Dict{Int,GameHistory}, priorities::Matrix{Float32}, index_batch::Vector{Tuple})::Nothing
@@ -168,8 +182,10 @@ function update_priorities!(buffer::Dict{Int,GameHistory}, priorities::Matrix{Fl
     end
 end
 
-
-function get_batch(conf::Config, buffer::Dict{Int,GameHistory})::Tuple{Vector{Tuple{Int64,Float32}},Tuple{Array{Float32,4},Matrix{Float32},Matrix{Float32},Matrix{Float32},Array{Float32,3},Any,Vector{Float32}}}
+"""
+Makes of batch of samples from the Buffer
+"""
+function get_batch(buffer::Dict{Int,GameHistory})::Tuple{Vector{Tuple{Int64,Float32}},Tuple{Array{Float32,4},Matrix{Float32},Matrix{Float32},Matrix{Float32},Array{Float32,3},Any,Vector{Float32}}}
     total_samples = sum([length(history.root_values) for history in values(buffer)])
     # @info "Replay buffer initialized with $(total_samples) samples"
     index_batch = Vector{Tuple{Int,Float32}}()
@@ -180,15 +196,15 @@ function get_batch(conf::Config, buffer::Dict{Int,GameHistory})::Tuple{Vector{Tu
 	policy_batch = Array{Float32}(undef, length(conf.action_space), conf.num_unroll_steps+1, 0)
 	gradient_scale_batch = Vector{Float32}()
     weight_batch = conf.PER ? Vector{Float32}() : nothing
-	n_games= sample_n_games(conf, buffer) # makes a batch of (batch_size) game unrolls
+	n_games= sample_n_games(buffer) # makes a batch of (batch_size) game unrolls
 	# @info "Sampled N games" size(n_games)
     for (game_id, history, game_prob) in n_games 
-        game_pos, pos_prob = sample_position(conf, history)
+        game_pos, pos_prob = sample_position(history)
 		# @info "get_batch"  size(history.observation_history) size(history.action_history) size(history.reward_history) size(history.to_play_history) size(history.child_visits) size(history.root_values)
-        target_values, target_rewards, target_policies, actions = make_target(conf, history, game_pos) # unrolls each game sample for num_unroll_steps
+        target_values, target_rewards, target_policies, actions = make_target(history, game_pos) # unrolls each game sample for num_unroll_steps
         push!(index_batch, (game_id, game_pos))
 		# @info "Empty batch and Target sizes are:" size(observation_batch) size(action_batch)  size(reward_batch) size(value_batch ) size(policy_batch) size(gradient_scale_batch) size(target_values) size(target_rewards) size(target_policies) size(actions)
-        observation_batch = cat(observation_batch, get_stacked_observations(conf, history, game_pos, conf.stacked_observations), dims=ndims(observation_batch))
+        observation_batch = cat(observation_batch, get_stacked_observations(history, game_pos, conf.stacked_observations), dims=ndims(observation_batch))
         action_batch = hcat(action_batch, actions)
         reward_batch = hcat(reward_batch, target_rewards)
         value_batch = hcat(value_batch, target_values)

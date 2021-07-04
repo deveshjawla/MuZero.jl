@@ -1,5 +1,20 @@
 using Parameters:@with_kw
 
+"""
+Stores information of a self-play game.
+"""
+mutable struct GameHistory
+    observation_history::Array{Float32,4}
+    action_history::Vector{Int}
+    reward_history::Vector{Float32}
+    to_play_history::Vector{Int}
+    child_visits::Matrix{Float32}
+    root_values::Vector{Float32}
+    reanalysed_predicted_root_values
+    priorities
+    game_priority
+end
+
 @with_kw struct Config
     seed::Int = 1337
     observation_shape::Tuple{Int,Int,Int} # Dimensions of the game observation, must be 3D (WHC). For a 1D array, please reshape it to (1, 1, length of array)
@@ -36,20 +51,13 @@ using Parameters:@with_kw
     value_loss_weight::Float32 = 0.25 # Scale the value loss to avoid overfitting of the value function, paper recommends 0.25 (See paper appendix Reanalyze)
 end
 
-"""
-Stores info about the Buffer, gets modified by the sample_game and save_game functions
-"""
-mutable struct BufferStats #TODO use better way of logging for eg. log to file
-	num_played_games::Int
-	num_played_steps::Int
-	num_reanalysed_games::Int
-	total_samples::Int
+
+function update_remote_counter!(remote_counter::RemoteChannel, update_count::Int)
+	old_value=take!(remote_counter)
+	put!(remote_counter, old_value + update_count)
+	return nothing
 end
 
-
-mutable struct LearningProgress
-	training_step::Int
-end
 
 @with_kw struct FeedForwardHP
 	width_hidden::Int

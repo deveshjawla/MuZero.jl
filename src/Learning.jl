@@ -4,6 +4,7 @@ using Statistics:mean
 using CUDA
 using Flux: cpu, Parallel
 import Flux, Functors
+using Base.Threads
 
 CUDA.allowscalar(false)
 array_on_gpu(::Array) = false
@@ -83,7 +84,7 @@ hlayers(depth::Int, hsize, bnmom, hyper) = [make_dense(hsize, hsize, bnmom, hype
 #######
 
 
-function init_representation(conf::Config,hyper::FeedForwardHP)
+function init_representation(hyper::FeedForwardHP)
 	indim = prod([conf.observation_shape[1],conf.observation_shape[2], (conf.observation_shape[3]*(conf.stacked_observations+1)+conf.stacked_observations)])
 	outdim = hyper.hidden_state_size
 	bnmom = hyper.batch_norm_momentum
@@ -96,7 +97,7 @@ function init_representation(conf::Config,hyper::FeedForwardHP)
 	return layers
 end
 
-function init_prediction(conf::Config,hyper::FeedForwardHP)
+function init_prediction(hyper::FeedForwardHP)
 	bnmom = hyper.batch_norm_momentum
 	indim = hyper.hidden_state_size
 	outdim = length(conf.action_space)
@@ -114,7 +115,7 @@ function init_prediction(conf::Config,hyper::FeedForwardHP)
 	return Chain(common, Split(value_head, policy_head))
 end
 
-function init_dynamics(conf::Config,hyper::FeedForwardHP)
+function init_dynamics(hyper::FeedForwardHP)
 	bnmom = hyper.batch_norm_momentum
 	indim = prod([conf.observation_shape[1],conf.observation_shape[2], (conf.observation_shape[3]+1)])
 	outdim = hyper.hidden_state_size
@@ -156,7 +157,7 @@ function resnet_block(size::Tuple{Int,Int}, n::Int, bnmom::Float32)
     x -> relu.(x))
 end
 
-function init_representation(conf::Config, hyper::ResNetHP)
+function init_representation(hyper::ResNetHP)
 	indim = conf.observation_shape
 	ksize = hyper.conv_kernel_size
 	@assert all(ksize .% 2 .== 1)
@@ -189,7 +190,7 @@ function init_representation(conf::Config, hyper::ResNetHP)
 	end
 end
 
-function init_prediction(conf::Config,hyper::ResNetHP)
+function init_prediction(hyper::ResNetHP)
 	indim = hyper.representation_output_size
 	outdim = length(conf.action_space)
 	ksize = (1, 1)
@@ -224,7 +225,7 @@ function init_prediction(conf::Config,hyper::ResNetHP)
 	return Chain(common, Split(value_head, policy_head))
 end
 
-function init_dynamics(conf::Config,hyper::ResNetHP)
+function init_dynamics(hyper::ResNetHP)
 	indim = hyper.representation_output_size
 	ksize = (1, 1)
 	@assert all(ksize .% 2 .== 1)
@@ -257,7 +258,7 @@ end
 ##########  Training
 ##########
 
-function loss(conf, params, predictions::Tuple, targets::Tuple, weight_batch::Any, gradient_scale_batch::Matrix{Float32})::Float32
+function loss(params, predictions::Tuple, targets::Tuple, weight_batch::Any, gradient_scale_batch::Matrix{Float32})::Float32
 	value, reward, policy_logits = predictions
 	target_values, target_rewards, target_policies = targets
 	# By default we Correct PER bias by using importance-sampling (IS) weights
@@ -302,9 +303,12 @@ function make_dynamics_input(states::Array{Float32,4},actions::Vector{Float32},c
 	return state_actions
 end
 
-function training(conf::Config, representation, prediction, dynamics, buffer::Dict{Int,GameHistory})::Nothing
+function learning!(num_played_games,
+training_step,
+remote_NNs,
+remote_buffer::RemoteChannel{BufferChannel})::Bool
 	
-    while buffer_stats.num_played_games < 1 # TODO, GPU should always have data available to train on.
+    while fetch(num_played_games) < 1 # TODO, GPU should always have data available to train on.
         # @info "Waiting for replay buffer to be filled"
 		sleep(0.1)
     end
@@ -312,11 +316,19 @@ function training(conf::Config, representation, prediction, dynamics, buffer::Di
 	# @info "Training Started"
 
 	optimiser = Flux.ADAMW()
-  	schedule = Stateful(Cos(λ0=1e-4, λ1=1e-2, period=10))
-	
-	while lp.training_step ≤ conf.training_steps
-		lp.training_step += 1
-        next_batch = get_batch(conf, buffer)
+  	schedule = Stateful(Cos(λ0=1e-4, λ1=1e-1, period=10))
+
+	NNs = fetch(remote_NNs)
+	representation= deepcopy(NNs.representation)
+	prediction= deepcopy(NNs.prediction)
+	dynamics= deepcopy(NNs.dynamics)
+	training_step_ = 0
+
+	while training_step_ ≤ conf.training_steps
+		
+		buffer = fetch(remote_buffer)
+
+        next_batch = get_batch(buffer)
 		index_batch, batch = next_batch
     	observation_batch, action_batch, target_values, target_rewards, target_policies, weight_batch, gradient_scale_batch = batch
 		gradient_scale_batch = permutedims(gradient_scale_batch)
@@ -371,40 +383,56 @@ function training(conf::Config, representation, prediction, dynamics, buffer::Di
 
 		# calculates losses over all the samples in this batch at once
 		l_representation, grads_representation = loss_grad(params_representation) do
-			loss(conf, params_representation, predictions, targets, weight_batch, gradient_scale_batch) 
+			loss(params_representation, predictions, targets, weight_batch, gradient_scale_batch) 
 		end
 		l_prediction, grads_prediction = loss_grad(params_prediction) do
-			loss(conf, params_prediction, predictions, targets, weight_batch, gradient_scale_batch) 
+			loss(params_prediction, predictions, targets, weight_batch, gradient_scale_batch) 
 		end
 		l_dynamics, grads_dynamics = loss_grad(params_dynamics) do
-			loss(conf, params_dynamics, predictions, targets, weight_batch, gradient_scale_batch) 
+			loss(params_dynamics, predictions, targets, weight_batch, gradient_scale_batch) 
 		end
-
-		@info "Training Progress" lp.training_step
-		@info "Representation loss =" l_representation
-		@info "Prediction loss =" l_prediction
-		@info "Dynamics loss=" l_dynamics
 
 		Flux.update!(optimiser, params_representation, grads_representation)
 		Flux.update!(optimiser, params_prediction, grads_prediction)
 		Flux.update!(optimiser, params_dynamics, grads_dynamics)
 
-		priorities = (abs.(predicted_values - target_values)).^conf.PER_alpha
 		
 		if conf.PER
+			priorities = (abs.(predicted_values - target_values)).^conf.PER_alpha
             # Save new priorities in the replay buffer (See https://arxiv.org/abs/1803.00933)
             update_priorities!(buffer, priorities, index_batch)
         end
-		
+
+		training_step_ += 1
+
+		# update_remote_counter!(training_step, 1)
+		# take!(training_step)
+		println(training_step_)
+		put!(training_step, training_step_)
+		println(training_step_)
+
+
 		# Save to the shared storage(disk) #TODO make them availbal on memory
-        if lp.training_step % conf.checkpoint_interval == 0 && lp.training_step > 1 
-			representation= cpu(representation)
-			prediction= cpu(prediction)
-			dynamics= cpu(dynamics)
-			serialize(joinpath(conf.networks_path,"$(lp.training_step)_representation.bin"), representation)
-			serialize(joinpath(conf.networks_path,"$(lp.training_step)_prediction.bin"), prediction)
-			serialize(joinpath(conf.networks_path,"$(lp.training_step)_dynamics.bin"), dynamics)
+        if training_step_ % conf.checkpoint_interval == 0 && training_step_ > 1 
+			
+			# old_net=take!(remote_NNs)
+			put!(remote_NNs, (representation=representation, prediction=prediction, dynamics=dynamics))
+			
+			@info "Training Progress" training_step_
+			@info "Representation loss =" l_representation
+			@info "Prediction loss =" l_prediction
+			@info "Dynamics loss=" l_dynamics
+
+			if training_step_ > round(Int, 0.9*conf.training_steps)
+				#saving networks to disk
+				representation= cpu(representation)
+				prediction= cpu(prediction)
+				dynamics= cpu(dynamics)
+				serialize(joinpath(conf.networks_path,"$(training_step_)_representation.bin"), representation)
+				serialize(joinpath(conf.networks_path,"$(training_step_)_prediction.bin"), prediction)
+				serialize(joinpath(conf.networks_path,"$(training_step_)_dynamics.bin"), dynamics)
+			end
         end
 	end
-	return nothing
+	return true
 end
